@@ -18,10 +18,21 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Create uploads directory if it doesn't exist
-const uploadDir = path.join(process.cwd(), 'uploads');
+// Check if running in serverless environment
+const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
+
+// Create uploads directory if it doesn't exist (only in non-serverless)
+const uploadDir = isServerless 
+  ? '/tmp/uploads' // Use /tmp in serverless (ephemeral storage)
+  : path.join(process.cwd(), 'uploads');
+
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (error) {
+    // Ignore error in serverless if directory creation fails
+    logger.warn('Could not create upload directory', { error, isServerless });
+  }
 }
 
 // Configure multer for file uploads
