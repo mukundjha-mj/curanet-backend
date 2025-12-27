@@ -1,0 +1,698 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  email                    String?                   @unique
+  phone                    String?                   @unique
+  role                     UserRole
+  passwordHash             String
+  status                   UserStatus                @default(pending_verification)
+  profileRef               String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  healthId                 String                    @id
+  isVerified               Boolean                   @default(false)
+  appearanceSettings       AppearanceSettings?
+  appointmentNotifications AppointmentNotification[]
+  doctorAppointments       Appointment[]             @relation("DoctorAppointments")
+  patientAppointments      Appointment[]             @relation("PatientAppointments")
+  auditLogs                AuditLog[]
+  patientConsentRequests   ConsentRequest[]          @relation("PatientConsentRequests")
+  providerConsentRequests  ConsentRequest[]          @relation("ProviderConsentRequests")
+  patientConsents          Consent[]                 @relation("PatientConsents")
+  providerConsents         Consent[]                 @relation("ProviderConsents")
+  dataManagementSettings   DataManagementSettings?
+  emailVerifications       EmailVerification[]
+  emailOtpVerifications    EmailOtpVerification[]
+  createdEmergencyShares   EmergencyShare[]          @relation("EmergencyShareCreator")
+  emergencyShares          EmergencyShare[]
+  fileAccesses             FileAccess[]
+  fileUploads              FileUpload[]
+  healthProfile            HealthProfile?
+  notificationSettings     NotificationSettings?
+  passwordResetTokens      PasswordResetToken[]
+  phoneOtpVerifications    PhoneOtpVerification[]
+  refreshTokens            RefreshToken[]
+  securitySettings         SecuritySettings?
+  userSessions             UserSession[]
+  userSettings             UserSettings?
+  verifiedObservations     Observation[]             @relation("VerifiedObservations")
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id                String    @id @default(cuid())
+  userId            String
+  tokenHash         String    @unique
+  deviceFingerprint String
+  issuedAt          DateTime  @default(now())
+  lastUsedAt        DateTime  @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  user              User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model EmailVerification {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model PhoneOtpVerification {
+  id        String    @id @default(cuid())
+  userId    String
+  phone     String
+  otpHash   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([phone])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("phone_otp_verifications")
+}
+
+model EmailOtpVerification {
+  id        String    @id @default(cuid())
+  userId    String
+  email     String
+  otpHash   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([email])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_otp_verifications")
+}
+
+model Consent {
+  id            String          @id @default(cuid())
+  patientId     String
+  providerId    String
+  status        ConsentStatus   @default(ACTIVE)
+  createdAt     DateTime        @default(now())
+  revokedAt     DateTime?
+  endTime       DateTime?
+  purpose       String
+  requestId     String?
+  scope         ConsentScope[]  @default([])
+  startTime     DateTime        @default(now())
+  accessCount   Int             @default(0)
+  expiresAt     DateTime?
+  lastAccessed  DateTime?
+  revokedReason String?
+  updatedAt     DateTime        @updatedAt
+  permissions   String[]        @default([])
+  patient       User            @relation("PatientConsents", fields: [patientId], references: [healthId])
+  provider      User            @relation("ProviderConsents", fields: [providerId], references: [healthId])
+  request       ConsentRequest? @relation(fields: [requestId], references: [id])
+
+  @@index([patientId, providerId])
+  @@index([status])
+  @@index([patientId])
+  @@index([providerId])
+  @@map("consents")
+}
+
+model ConsentRequest {
+  id              String         @id @default(cuid())
+  patientId       String
+  providerId      String
+  scope           ConsentScope[] @default([])
+  purpose         String
+  requestedExpiry DateTime?
+  message         String?
+  expiresAt       DateTime?
+  createdAt       DateTime       @default(now())
+  deniedReason    String?
+  permissions     String[]       @default([])
+  reviewedAt      DateTime?
+  updatedAt       DateTime       @updatedAt
+  status          RequestStatus  @default(PENDING)
+  patient         User           @relation("PatientConsentRequests", fields: [patientId], references: [healthId])
+  provider        User           @relation("ProviderConsentRequests", fields: [providerId], references: [healthId])
+  consents        Consent[]
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([status])
+  @@map("consent_requests")
+}
+
+model Encounter {
+  id            String        @id @default(cuid())
+  patientId     String
+  providerId    String
+  type          String
+  reason        String?
+  startTime     DateTime
+  endTime       DateTime?
+  notes         String?
+  createdById   String
+  createdByRole String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  observations  Observation[]
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([startTime])
+  @@map("encounters")
+}
+
+model Observation {
+  id                    String              @id @default(cuid())
+  patientId             String
+  providerId            String
+  encounterId           String?
+  code                  String
+  value                 Json
+  unit                  String?
+  recordedAt            DateTime            @default(now())
+  createdById           String
+  createdByRole         String
+  
+  // Self-recording enhancements
+  source                ObservationSource   @default(DOCTOR_RECORDED)
+  verifiedByDoctorId    String?
+  verifiedAt            DateTime?
+  verificationStatus    VerificationStatus  @default(PENDING)
+  verificationNotes     String?
+  deviceMetadata        Json?               // Device info for IoT devices
+  attachmentUrl         String?             // Photo/file attachment
+  
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  encounter             Encounter?          @relation(fields: [encounterId], references: [id])
+  verifiedByDoctor      User?               @relation("VerifiedObservations", fields: [verifiedByDoctorId], references: [healthId])
+
+  @@index([patientId])
+  @@index([providerId])
+  @@index([encounterId])
+  @@index([source])
+  @@index([verificationStatus])
+  @@index([verifiedByDoctorId])
+  @@map("observations")
+}
+
+model HealthProfile {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  displayName      String?
+  dateOfBirth      DateTime?
+  gender           String?
+  bloodGroup       String?
+  allergies        Json?
+  medications      Json?
+  emergencyContact String?
+  emergencyPhone   String?
+  address          Json?
+  isActive         Boolean   @default(true)
+  verifiedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  firstName        String
+  lastName         String
+  user             User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("health_profiles")
+}
+
+model HealthIdAudit {
+  id         String   @id @default(cuid())
+  healthId   String
+  action     String
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+  accessedBy String
+
+  @@index([healthId])
+  @@index([timestamp])
+  @@index([accessedBy])
+  @@map("health_id_audits")
+}
+
+model EmergencyShare {
+  id              String    @id @default(cuid())
+  patientHealthId String
+  tokenHash       String    @unique
+  shareId         String    @unique @default(cuid())
+  scope           Json
+  expiresAt       DateTime
+  createdAt       DateTime  @default(now())
+  createdBy       String
+  used            Boolean   @default(false)
+  usedAt          DateTime?
+  accessedBy      String?
+  accessLog       Json?
+  creator         User      @relation("EmergencyShareCreator", fields: [createdBy], references: [healthId])
+  patient         User      @relation(fields: [patientHealthId], references: [healthId], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([shareId])
+  @@index([patientHealthId])
+  @@index([expiresAt])
+  @@map("emergency_shares")
+}
+
+model Appointment {
+  id              String                    @id @default(cuid())
+  patientId       String
+  doctorId        String
+  facilityId      String?
+  requestedTime   DateTime
+  status          AppointmentStatus         @default(PENDING)
+  notes           String?
+  patientNotes    String?
+  doctorNotes     String?
+  reasonForVisit  String?
+  duration        Int?
+  appointmentType String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  confirmedAt     DateTime?
+  rejectedAt      DateTime?
+  cancelledAt     DateTime?
+  notifications   AppointmentNotification[]
+  doctor          User                      @relation("DoctorAppointments", fields: [doctorId], references: [healthId], onDelete: Cascade)
+  patient         User                      @relation("PatientAppointments", fields: [patientId], references: [healthId], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([status])
+  @@index([requestedTime])
+  @@index([createdAt])
+  @@map("appointments")
+}
+
+model AppointmentNotification {
+  id            String                      @id @default(cuid())
+  appointmentId String
+  recipientId   String
+  type          AppointmentNotificationType
+  message       String
+  sent          Boolean                     @default(false)
+  sentAt        DateTime?
+  createdAt     DateTime                    @default(now())
+  appointment   Appointment                 @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  recipient     User                        @relation(fields: [recipientId], references: [healthId], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([recipientId])
+  @@index([sent])
+  @@map("appointment_notifications")
+}
+
+model FileUpload {
+  id            String           @id @default(cuid())
+  ownerHealthId String
+  recordId      String?
+  filename      String
+  originalName  String
+  mimeType      String
+  fileSize      Int
+  checksum      String?
+  storageKey    String
+  uploadToken   String?
+  status        FileUploadStatus @default(UPLOADING)
+  description   String?
+  tags          Json?
+  uploadedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  expiresAt     DateTime?
+  fileAccesses  FileAccess[]
+  owner         User             @relation(fields: [ownerHealthId], references: [healthId], onDelete: Cascade)
+
+  @@index([ownerHealthId])
+  @@index([recordId])
+  @@index([status])
+  @@index([mimeType])
+  @@index([createdAt])
+  @@map("file_uploads")
+}
+
+model FileAccess {
+  id         String     @id @default(cuid())
+  fileId     String
+  accessorId String
+  action     String
+  accessedAt DateTime   @default(now())
+  ipAddress  String?
+  userAgent  String?
+  accessor   User       @relation(fields: [accessorId], references: [healthId], onDelete: Cascade)
+  file       FileUpload @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([accessorId])
+  @@index([accessedAt])
+  @@map("file_access")
+}
+
+model UserSettings {
+  id                    String             @id @default(cuid())
+  userId                String             @unique
+  emailNotifications    Boolean            @default(true)
+  smsNotifications      Boolean            @default(true)
+  profileVisibility     ProfileVisibility  @default(PRIVATE)
+  shareLocation         Boolean            @default(false)
+  shareWithEmergency    Boolean            @default(true)
+  dataRetentionPeriod   Int                @default(365)
+  autoShareLabs         Boolean            @default(false)
+  autoShareRadiology    Boolean            @default(false)
+  emergencyAccessLevel  AccessLevel        @default(BASIC)
+  consentReminderDays   Int                @default(30)
+  sessionTimeoutMinutes Int                @default(60)
+  twoFactorEnabled      Boolean            @default(false)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  emergencyContacts     EmergencyContact[]
+  user                  User               @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model EmergencyContact {
+  id             String       @id @default(cuid())
+  userSettingsId String
+  name           String
+  relationship   String
+  phone          String
+  email          String?
+  isPrimary      Boolean      @default(false)
+  accessLevel    AccessLevel  @default(BASIC)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  userSettings   UserSettings @relation(fields: [userSettingsId], references: [id], onDelete: Cascade)
+
+  @@index([userSettingsId])
+  @@map("emergency_contacts")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  resource   String
+  resourceId String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model NotificationSettings {
+  id                   String                @id @default(cuid())
+  userId               String                @unique
+  emailNotifications   Boolean               @default(true)
+  smsNotifications     Boolean               @default(false)
+  pushNotifications    Boolean               @default(true)
+  appointmentReminders Boolean               @default(true)
+  recordUpdates        Boolean               @default(true)
+  marketingEmails      Boolean               @default(false)
+  securityAlerts       Boolean               @default(true)
+  billingNotifications Boolean               @default(true)
+  labResults           Boolean               @default(true)
+  prescriptionUpdates  Boolean               @default(true)
+  frequency            NotificationFrequency @default(IMMEDIATE)
+  quietHoursStart      String?
+  quietHoursEnd        String?
+  timezone             String                @default("UTC")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  user                 User                  @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("notification_settings")
+}
+
+model AppearanceSettings {
+  id             String          @id @default(cuid())
+  userId         String          @unique
+  theme          ThemePreference @default(SYSTEM)
+  language       String          @default("en")
+  timezone       String          @default("UTC")
+  dateFormat     String          @default("MM/DD/YYYY")
+  timeFormat     String          @default("12h")
+  fontSize       String          @default("medium")
+  fontFamily     String          @default("system")
+  highContrast   Boolean         @default(false)
+  reduceMotion   Boolean         @default(false)
+  compactMode    Boolean         @default(false)
+  showAnimations Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  user           User            @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("appearance_settings")
+}
+
+model SecuritySettings {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  twoFactorEnabled      Boolean   @default(false)
+  twoFactorSecret       String?
+  backupCodes           String[]  @default([])
+  sessionTimeout        Int       @default(3600)
+  loginNotifications    Boolean   @default(true)
+  deviceTracking        Boolean   @default(true)
+  passwordChangedAt     DateTime?
+  lastPasswordCheck     DateTime?
+  requirePasswordChange Boolean   @default(false)
+  allowedIpAddresses    String[]  @default([])
+  blockedIpAddresses    String[]  @default([])
+  maxConcurrentSessions Int       @default(5)
+  autoLockTimeout       Int       @default(900)
+  requireBiometric      Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("security_settings")
+}
+
+model DataManagementSettings {
+  id                  String              @id @default(cuid())
+  userId              String              @unique
+  dataRetentionPeriod DataRetentionPeriod @default(FIVE_YEARS)
+  autoBackup          Boolean             @default(true)
+  backupFrequency     String              @default("weekly")
+  exportFormat        String              @default("JSON")
+  includeDeletedData  Boolean             @default(false)
+  shareAggregatedData Boolean             @default(false)
+  allowDataMining     Boolean             @default(false)
+  gdprCompliant       Boolean             @default(true)
+  hipaaCompliant      Boolean             @default(true)
+  encryptBackups      Boolean             @default(true)
+  cloudBackupEnabled  Boolean             @default(true)
+  lastExportDate      DateTime?
+  lastBackupDate      DateTime?
+  totalDataSize       BigInt?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@map("data_management_settings")
+}
+
+model UserSession {
+  id           String    @id @default(cuid())
+  userId       String
+  sessionToken String    @unique
+  deviceInfo   String?
+  deviceId     String?
+  ipAddress    String?
+  userAgent    String?
+  location     String?
+  browser      String?
+  os           String?
+  isActive     Boolean   @default(true)
+  isTrusted    Boolean   @default(false)
+  lastActivity DateTime  @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+  revokedBy    String?
+  user         User      @relation(fields: [userId], references: [healthId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([lastActivity])
+  @@map("user_sessions")
+}
+
+enum UserRole {
+  patient
+  doctor
+  pharmacy
+  admin
+}
+
+enum UserStatus {
+  pending_verification
+  active
+  suspended
+  pending_approval
+}
+
+/// FHIR-lite additions
+enum PrescriptionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum ObservationSource {
+  SELF_REPORTED
+  DEVICE
+  DOCTOR_RECORDED
+  IMPORTED
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  FLAGGED
+  REJECTED
+}
+
+enum ConsentStatus {
+  ACTIVE
+  INACTIVE
+  REVOKED
+  EXPIRED
+  REQUESTED
+  DENIED
+}
+
+enum ConsentScope {
+  READ_BASIC
+  READ_MEDICAL
+  READ_LAB
+  READ_RADIOLOGY
+  WRITE_PRESCRIPTION
+  WRITE_NOTES
+  EMERGENCY_ACCESS
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum AppointmentNotificationType {
+  APPOINTMENT_REQUESTED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_REJECTED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_REMINDER
+}
+
+enum FileUploadStatus {
+  UPLOADING
+  COMPLETED
+  FAILED
+  EXPIRED
+  DELETED
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  FRIENDS
+  PRIVATE
+}
+
+enum AccessLevel {
+  BASIC
+  MEDICAL
+  FULL
+}
+
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+enum DataRetentionPeriod {
+  ONE_YEAR
+  TWO_YEARS
+  FIVE_YEARS
+  TEN_YEARS
+  INDEFINITE
+}
+
+enum NotificationFrequency {
+  IMMEDIATE
+  HOURLY
+  DAILY
+  WEEKLY
+  NEVER
+}

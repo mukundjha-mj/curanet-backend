@@ -1,0 +1,90 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment variables (NEVER COMMIT!)
+.env
+.env.local
+.env.*.local
+
+# Generated files
+/src/generated/prisma
+
+# Build artifacts
+dist/
+build/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Uploads & User data
+uploads/
+uploads/*
+
+# Test files (temporary)
+*test*.js
+*check*.js
+*reset*.js
+*.test.js
+test-*.js
+check-*.js
+reset-*.js
+
+# SQL dumps & test data
+*.sql
+!prisma/migrations/**/*.sql
+*.dump
+*.backup
+
+# Credentials & Keys (CRITICAL!)
+*.key
+*.pem
+*.p12
+*.pfx
+*firebase*.json
+*google-services*.json
+*credentials*.json
+*serviceAccount*.json
+service-account.json
+firebase-adminsdk*.json
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
+.DS_Store
+*.tmp
+
+# Coverage & Test reports
+coverage/
+.nyc_output/
+*.lcov
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Package manager
+package-lock.json.backup
+yarn.lock.backup
+
+# All markdown files except README.md
+*.md
+!README.md
