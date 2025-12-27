@@ -19,35 +19,48 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
-  format: logFormat,
-  defaultMeta: { service: 'curanet-backend' },
-  transports: [
-    // Console transport with colors for development
-    new winston.transports.Console({
-      format: process.env.NODE_ENV === 'production' ? logFormat : consoleFormat
-    }),
-    // File transport for errors
+// Check if running in serverless environment (Vercel, AWS Lambda, etc.)
+const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
+
+// Configure transports based on environment
+const transports: winston.transport[] = [
+  // Console transport - always available
+  new winston.transports.Console({
+    format: process.env.NODE_ENV === 'production' ? logFormat : consoleFormat
+  })
+];
+
+// Only add file transports if NOT in serverless environment
+if (!isServerless) {
+  transports.push(
     new winston.transports.File({ 
       filename: 'logs/error.log', 
       level: 'error',
       maxsize: 5242880, // 5MB
       maxFiles: 5
     }),
-    // File transport for all logs
     new winston.transports.File({ 
       filename: 'logs/combined.log',
       maxsize: 5242880, // 5MB
       maxFiles: 5
     })
-  ],
-  exceptionHandlers: [
-    new winston.transports.File({ filename: 'logs/exceptions.log' })
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({ filename: 'logs/rejections.log' })
-  ]
+  );
+}
+
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  format: logFormat,
+  defaultMeta: { service: 'curanet-backend' },
+  transports,
+  // Only use file handlers if not serverless
+  ...(isServerless ? {} : {
+    exceptionHandlers: [
+      new winston.transports.File({ filename: 'logs/exceptions.log' })
+    ],
+    rejectionHandlers: [
+      new winston.transports.File({ filename: 'logs/rejections.log' })
+    ]
+  })
 });
 
 // Create a stream object for Morgan (HTTP request logging)
