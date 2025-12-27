@@ -68,16 +68,11 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Basic middlewares
-const allowedOrigins = process.env.CORS_ORIGIN
-	? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
-	: process.env.NODE_ENV === 'production'
-		? (() => { throw new Error('CORS_ORIGIN must be set in production environment'); })()
-		: [
-			'http://localhost:3000',
-			'http://127.0.0.1:3000',
-			'http://localhost:3001',
-			'http://127.0.0.1:3001',
-		];
+if (!process.env.CORS_ORIGIN) {
+	throw new Error('CORS_ORIGIN environment variable must be set');
+}
+
+const allowedOrigins = process.env.CORS_ORIGIN.split(',').map(o => o.trim());
 
 const corsOptions: cors.CorsOptions = {
 	origin: (origin, callback) => {
