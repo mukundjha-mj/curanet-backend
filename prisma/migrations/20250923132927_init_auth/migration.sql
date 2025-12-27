@@ -1,4 +1,4 @@
--- CreateEnum
+git commit -m "first commit"-- CreateEnum
 CREATE TYPE "public"."UserRole" AS ENUM ('patient', 'doctor', 'pharmacy', 'admin');
 
 -- CreateEnum
