@@ -82,7 +82,9 @@ const corsOptions: cors.CorsOptions = {
 		if (allowedOrigins.includes(origin)) {
 			callback(null, true);
 		} else {
-			callback(new Error('Not allowed by CORS'));
+			// Reject CORS request (don't throw error, just return false)
+			logger.warn('CORS request blocked', { origin, allowedOrigins });
+			callback(null, false);
 		}
 	},
 	credentials: true,
