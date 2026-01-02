@@ -78,7 +78,7 @@ const corsOptions: cors.CorsOptions = {
 	origin: (origin, callback) => {
 		// Allow requests with no origin (mobile apps, Postman, curl, etc.)
 		if (!origin) return callback(null, true);
-		
+
 		if (allowedOrigins.includes(origin)) {
 			callback(null, true);
 		} else {
@@ -97,7 +97,7 @@ app.use(cors(corsOptions));
 // Handle CORS preflight (OPTIONS) across-the-board using a regex (Express 5 compatible)
 app.options(/.*/, cors(corsOptions));
 // Handle CORS preflight (OPTIONS) for all API routes (Express 5 doesn't support '*')
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '25mb' })); // Increased for Base64 file uploads
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -133,7 +133,7 @@ app.get('/health', (_req, res) => res.status(200).json({ status: 'healthy', time
 
 // Test endpoints - only available in development
 if (process.env.NODE_ENV !== 'production') {
-  // Test endpoints removed
+	// Test endpoints removed
 } // End of test endpoints
 
 // 404 handler
@@ -145,32 +145,32 @@ app.use((req, res) => {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
 	const errorId = Math.random().toString(36).substring(7);
-	
+
 	// Log full error details internally
-	logger.error('Unhandled error', { 
-		errorId, 
-		error: err, 
-		status: err?.status, 
+	logger.error('Unhandled error', {
+		errorId,
+		error: err,
+		status: err?.status,
 		message: err?.message,
 		stack: err?.stack,
 		path: req.path,
 		method: req.method
 	});
-	
+
 	// In production, send generic error messages to avoid information leakage
 	if (process.env.NODE_ENV === 'production') {
 		const status = err?.status || 500;
-		const message = status < 500 
-			? (err?.message || 'Bad request') 
+		const message = status < 500
+			? (err?.message || 'Bad request')
 			: 'Internal server error';
-		
-		res.status(status).json({ 
+
+		res.status(status).json({
 			message,
 			errorId // Include error ID for support tickets
 		});
 	} else {
 		// In development, send full error details for debugging
-		res.status(err?.status || 500).json({ 
+		res.status(err?.status || 500).json({
 			message: err?.message || 'Internal server error',
 			errorId,
 			stack: err?.stack,
@@ -187,18 +187,18 @@ const server = app.listen(PORT, () => {
 // Graceful shutdown handler
 const gracefulShutdown = async (signal: string) => {
 	logger.info(`${signal} received. Starting graceful shutdown...`);
-	
+
 	// Stop accepting new connections
 	server.close(async () => {
 		logger.info('HTTP server closed');
-		
+
 		try {
 			// Close database connections
 			const { PrismaClient } = await import('@prisma/client');
 			const prisma = new PrismaClient();
 			await prisma.$disconnect();
 			logger.info('Database connections closed');
-			
+
 			logger.info('Graceful shutdown completed');
 			process.exit(0);
 		} catch (error) {
@@ -206,7 +206,7 @@ const gracefulShutdown = async (signal: string) => {
 			process.exit(1);
 		}
 	});
-	
+
 	// Force shutdown after 30 seconds
 	setTimeout(() => {
 		logger.error('Forced shutdown after timeout');

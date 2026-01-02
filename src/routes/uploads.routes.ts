@@ -6,7 +6,7 @@ import { authenticateToken } from '../middlewares/authMiddleware';
 const router = express.Router();
 
 // Configure multer for memory storage
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB
 });
@@ -14,8 +14,17 @@ const upload = multer({
 // Legacy endpoint alias
 router.get('/my-files', authenticateToken, UploadsController.listFiles);
 
+// Middleware to optionally use Multer only for FormData requests
+const optionalMulter = (req: any, res: any, next: any) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return upload.single('file')(req, res, next);
+  }
+  next();
+};
+
 // File upload (supports both FormData and JSON base64)
-router.post('/file', authenticateToken, upload.single('file'), UploadsController.uploadFile);
+router.post('/file', authenticateToken, optionalMulter, UploadsController.uploadFile);
 
 // File download endpoint
 router.get('/file/:fileId', authenticateToken, UploadsController.downloadFile);
