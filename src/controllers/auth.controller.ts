@@ -142,11 +142,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
         while (!isUnique && attempts < maxAttempts) {
             healthId = generateHealthId();
-            
+
             const existing = await prisma.user.findUnique({
                 where: { healthId }
             });
-            
+
             if (!existing) {
                 isUnique = true;
             }
@@ -253,9 +253,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         res.status(201).json({
             message: normalizedEmail && phone
                 ? 'User registered successfully. Please check your email and phone for verification.'
-                : normalizedEmail 
-                ? 'User registered successfully. Please check your email for verification.'
-                : 'User registered successfully. Please check your phone for OTP.',
+                : normalizedEmail
+                    ? 'User registered successfully. Please check your email for verification.'
+                    : 'User registered successfully. Please check your phone for OTP.',
             user: userResponse,
             ...(process.env.NODE_ENV !== 'production' && normalizedEmail ? { devVerificationToken: verificationToken } : {})
         });
@@ -387,6 +387,17 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
         console.log('✅ Login successful!');
 
+        // Detect platform from User-Agent or explicit 'platform' parameter
+        const userAgent = req.get('User-Agent') || '';
+        const platform = (req.body as any)?.platform?.toLowerCase() || '';
+        const isMobile = platform === 'mobile' || platform === 'flutter' || platform === 'android' || platform === 'ios' ||
+            userAgent.includes('Dart') || userAgent.includes('Flutter') ||
+            (userAgent.includes('Mobile') && !userAgent.includes('Mozilla'));
+
+        // Token expiry: 15 minutes for web, 30 days for mobile
+        const tokenExpiry = isMobile ? '30d' : '15m';
+        console.log(`📱 Platform detected: ${isMobile ? 'Mobile' : 'Web'}, token expiry: ${tokenExpiry}`);
+
         // Generate tokens
         const accessTokenPayload = {
             sub: user.healthId,
@@ -397,7 +408,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         };
 
         const accessToken = jwt.sign(accessTokenPayload, getJwtSecret(), {
-            expiresIn: '15m',
+            expiresIn: tokenExpiry,
             algorithm: 'HS256'
         });
 
@@ -440,6 +451,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         res.json({
             message: 'Login successful',
             accessToken,
+            refreshToken, // Also return in body for mobile apps that can't access cookies
             user: userResponse
         });
 
@@ -451,7 +463,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
 export const refresh = async (req: CookieRequest, res: Response): Promise<void> => {
     try {
-        const refreshToken = req.cookies?.refreshToken;
+        // Accept refresh token from cookie (web) or body/header (mobile)
+        const refreshToken = req.cookies?.refreshToken ||
+            (req.body as any)?.refreshToken ||
+            req.headers['x-refresh-token'] as string;
 
         if (!refreshToken) {
             res.status(401).json({ message: 'Refresh token not provided' });
@@ -492,8 +507,16 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
             jti: crypto.randomUUID()
         };
 
+        // Detect platform for token expiry
+        const userAgent = req.get('User-Agent') || '';
+        const platform = (req.body as any)?.platform?.toLowerCase() || '';
+        const isMobile = platform === 'mobile' || platform === 'flutter' || platform === 'android' || platform === 'ios' ||
+            userAgent.includes('Dart') || userAgent.includes('Flutter') ||
+            (userAgent.includes('Mobile') && !userAgent.includes('Mozilla'));
+        const tokenExpiry = isMobile ? '30d' : '15m';
+
         const accessToken = jwt.sign(accessTokenPayload, getJwtSecret(), {
-            expiresIn: '15m',
+            expiresIn: tokenExpiry,
             algorithm: 'HS256'
         });
 
@@ -517,7 +540,7 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
             });
         });
 
-        // Set new refresh token cookie
+        // Set new refresh token cookie (for web)
         res.cookie('refreshToken', newRefreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -525,7 +548,8 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
 
-        res.json({ accessToken });
+        // Return both tokens in body for mobile apps
+        res.json({ accessToken, refreshToken: newRefreshToken });
 
     } catch (error: any) {
         console.error('Refresh token error:', error);
@@ -539,7 +563,7 @@ export const logout = async (req: CookieRequest & AuthenticatedRequest, res: Res
 
         if (refreshToken) {
             const tokenHash = hashToken(refreshToken);
-            
+
             // Revoke refresh token
             await prisma.refreshToken.updateMany({
                 where: { tokenHash },
@@ -831,9 +855,9 @@ export const profile = async (req: AuthenticatedRequest, res: Response): Promise
                 }
             });
 
-            res.json({ 
+            res.json({
                 message: 'Profile updated successfully',
-                user: updatedUser 
+                user: updatedUser
             });
             return;
         }
@@ -931,9 +955,9 @@ export const verifyPhoneOtp = async (req: Request, res: Response): Promise<void>
         const result = await OtpService.verifyOtp(phone, otp);
 
         if (result.success) {
-            res.json({ 
+            res.json({
                 message: 'Phone verified successfully',
-                userId: result.userId 
+                userId: result.userId
             });
         } else {
             res.status(400).json({ message: result.message });
