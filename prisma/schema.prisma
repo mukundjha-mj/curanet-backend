@@ -28,21 +28,21 @@ model User {
   patientConsents          Consent[]                 @relation("PatientConsents")
   providerConsents         Consent[]                 @relation("ProviderConsents")
   dataManagementSettings   DataManagementSettings?
-  emailVerifications       EmailVerification[]
   emailOtpVerifications    EmailOtpVerification[]
+  emailVerifications       EmailVerification[]
   createdEmergencyShares   EmergencyShare[]          @relation("EmergencyShareCreator")
   emergencyShares          EmergencyShare[]
   fileAccesses             FileAccess[]
   fileUploads              FileUpload[]
   healthProfile            HealthProfile?
   notificationSettings     NotificationSettings?
+  verifiedObservations     Observation[]             @relation("VerifiedObservations")
   passwordResetTokens      PasswordResetToken[]
   phoneOtpVerifications    PhoneOtpVerification[]
   refreshTokens            RefreshToken[]
   securitySettings         SecuritySettings?
   userSessions             UserSession[]
   userSettings             UserSettings?
-  verifiedObservations     Observation[]             @relation("VerifiedObservations")
 
   @@index([email])
   @@index([status])
@@ -207,30 +207,27 @@ model Encounter {
 }
 
 model Observation {
-  id                    String              @id @default(cuid())
-  patientId             String
-  providerId            String
-  encounterId           String?
-  code                  String
-  value                 Json
-  unit                  String?
-  recordedAt            DateTime            @default(now())
-  createdById           String
-  createdByRole         String
-  
-  // Self-recording enhancements
-  source                ObservationSource   @default(DOCTOR_RECORDED)
-  verifiedByDoctorId    String?
-  verifiedAt            DateTime?
-  verificationStatus    VerificationStatus  @default(PENDING)
-  verificationNotes     String?
-  deviceMetadata        Json?               // Device info for IoT devices
-  attachmentUrl         String?             // Photo/file attachment
-  
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
-  encounter             Encounter?          @relation(fields: [encounterId], references: [id])
-  verifiedByDoctor      User?               @relation("VerifiedObservations", fields: [verifiedByDoctorId], references: [healthId])
+  id                 String             @id @default(cuid())
+  patientId          String
+  providerId         String
+  encounterId        String?
+  code               String
+  value              Json
+  unit               String?
+  recordedAt         DateTime           @default(now())
+  createdById        String
+  createdByRole      String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  attachmentUrl      String?
+  deviceMetadata     Json?
+  source             ObservationSource  @default(DOCTOR_RECORDED)
+  verificationNotes  String?
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt         DateTime?
+  verifiedByDoctorId String?
+  encounter          Encounter?         @relation(fields: [encounterId], references: [id])
+  verifiedByDoctor   User?              @relation("VerifiedObservations", fields: [verifiedByDoctorId], references: [healthId])
 
   @@index([patientId])
   @@index([providerId])
@@ -360,7 +357,7 @@ model FileUpload {
   mimeType      String
   fileSize      Int
   checksum      String?
-  storageKey    String
+  fileData      String           // Base64 encoded file content (changed from storageKey)
   uploadToken   String?
   status        FileUploadStatus @default(UPLOADING)
   description   String?
@@ -614,11 +611,11 @@ enum VerificationStatus {
 
 enum ConsentStatus {
   ACTIVE
-  INACTIVE
   REVOKED
   EXPIRED
   REQUESTED
   DENIED
+  INACTIVE
 }
 
 enum ConsentScope {

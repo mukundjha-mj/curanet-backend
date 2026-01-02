@@ -1,6 +1,4 @@
 import prisma from '../utils/prisma';
-import fs from 'fs';
-import path from 'path';
 import logger from '../utils/logger';
 import crypto from 'crypto';
 
@@ -11,7 +9,6 @@ export interface FileValidationResult {
 }
 
 export class FileService {
-  private static readonly UPLOAD_DIR = path.join(process.cwd(), 'uploads');
   private static readonly MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
   private static readonly ALLOWED_MIME_TYPES = [
     // Images
@@ -92,58 +89,6 @@ export class FileService {
   }
 
   /**
-   * Generate secure storage path
-   */
-  static generateStoragePath(ownerHealthId: string, originalFilename: string): string {
-    const timestamp = Date.now();
-    const random = crypto.randomBytes(8).toString('hex');
-    const ext = path.extname(originalFilename);
-    const sanitizedName = this.sanitizeFilename(path.basename(originalFilename, ext));
-    
-    return path.join(
-      this.UPLOAD_DIR,
-      ownerHealthId,
-      `${timestamp}-${random}-${sanitizedName}${ext}`
-    );
-  }
-
-  /**
-   * Ensure upload directory exists
-   */
-  static ensureUploadDirectory(ownerHealthId: string): void {
-    const userUploadDir = path.join(this.UPLOAD_DIR, ownerHealthId);
-    if (!fs.existsSync(userUploadDir)) {
-      fs.mkdirSync(userUploadDir, { recursive: true });
-    }
-  }
-
-  /**
-   * Calculate file checksum
-   */
-  static calculateChecksum(filePath: string): string {
-    const fileBuffer = fs.readFileSync(filePath);
-    return crypto.createHash('sha256').update(fileBuffer).digest('hex');
-  }
-
-  /**
-   * Get file info from path
-   */
-  static getFileInfo(filePath: string): { size: number; exists: boolean } {
-    try {
-      const stats = fs.statSync(filePath);
-      return {
-        size: stats.size,
-        exists: true
-      };
-    } catch (error) {
-      return {
-        size: 0,
-        exists: false
-      };
-    }
-  }
-
-  /**
    * Clean up expired uploads
    * Should be called periodically by a cron job
    */
@@ -167,12 +112,7 @@ export class FileService {
 
       for (const upload of expiredUploads) {
         try {
-          // Delete physical file if it exists
-          if (upload.storageKey && fs.existsSync(upload.storageKey)) {
-            fs.unlinkSync(upload.storageKey);
-          }
-
-          // Update status to expired
+          // Update status to expired (file data stored in database as base64)
           await prisma.fileUpload.update({
             where: { id: upload.id },
             data: { status: 'EXPIRED' }
@@ -208,13 +148,10 @@ export class FileService {
 
       for (const file of deletedFiles) {
         try {
-          // Delete physical file if it exists
-          if (file.storageKey && fs.existsSync(file.storageKey)) {
-            fs.unlinkSync(file.storageKey);
-            cleanedCount++;
-          }
+          // File data is stored in database as base64, no filesystem cleanup needed
+          cleanedCount++;
         } catch (error) {
-          logger.error('Error deleting file', { fileId: file.id, error });
+          logger.error('Error processing deleted file', { fileId: file.id, error });
         }
       }
 
@@ -305,10 +242,18 @@ export class FileService {
   /**
    * Generate file thumbnail (placeholder for future implementation)
    */
-  static async generateThumbnail(filePath: string, mimeType: string): Promise<string | null> {
+  static async generateThumbnail(fileData: string, mimeType: string): Promise<string | null> {
     // This would integrate with image processing libraries like Sharp
     // For now, return null (no thumbnail)
     return null;
+  }
+
+  /**
+   * Calculate checksum from base64 data
+   */
+  static calculateChecksumFromBase64(base64Data: string): string {
+    const buffer = Buffer.from(base64Data, 'base64');
+    return crypto.createHash('sha256').update(buffer).digest('hex');
   }
 }
 

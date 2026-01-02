@@ -197,11 +197,7 @@ router.delete('/:fileId', authenticateToken, async (req: AuthenticatedRequest, r
     }
 
     if (permanent) {
-      // Permanently delete from database and storage
-      if (fileUpload.storageKey && require('fs').existsSync(fileUpload.storageKey)) {
-        require('fs').unlinkSync(fileUpload.storageKey);
-      }
-
+      // Permanently delete from database (file data is stored in DB as base64)
       await prisma.fileUpload.delete({
         where: { id: fileId }
       });

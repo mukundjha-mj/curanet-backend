@@ -1,11 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
-import multer from 'multer';
 import crypto from 'crypto';
-import CryptoJS from 'crypto-js';
-import fs from 'fs';
-import path from 'path';
 import AuditService from '../services/audit.service';
 
 interface AuthenticatedRequest extends Request {
@@ -18,407 +14,167 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Check if running in serverless environment
-const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY;
-
-// Create uploads directory if it doesn't exist (only in non-serverless)
-const uploadDir = isServerless 
-  ? '/tmp/uploads' // Use /tmp in serverless (ephemeral storage)
-  : path.join(process.cwd(), 'uploads');
-
-if (!fs.existsSync(uploadDir)) {
-  try {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  } catch (error) {
-    // Ignore error in serverless if directory creation fails
-    logger.warn('Could not create upload directory', { error, isServerless });
-  }
-}
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename while preserving extension
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, `file-${uniqueSuffix}${ext}`);
-  }
-});
-
-// File filter for security
-const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  // Allowed file types for healthcare documents
-  const allowedMimeTypes = [
-    // Images
-    'image/jpeg',
-    'image/jpg', 
-    'image/png',
-    'image/gif',
-    'image/webp',
-    // Documents
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/plain',
-    'text/csv',
-    'text/markdown',
-    'text/md',
-    // Common fallback types
-    'application/octet-stream', // Allow for files with unclear MIME types
-    // Medical imaging (basic support)
-    'application/dicom',
-    'image/tiff'
-  ];
-
-  if (allowedMimeTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`File type ${file.mimetype} not allowed. Allowed types: ${allowedMimeTypes.join(', ')}`));
-  }
-};
-
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
-    files: 10 // Max 10 files per request
-  }
-});
-
 export class UploadsController {
   /**
-   * Initialize Upload
-   * POST /api/uploads/init
-   * Creates upload token and returns upload configuration
+   * Upload File (Supports both FormData and Base64 JSON)
+   * POST /api/uploads/file
+   * Stores file directly in database as base64
    */
-  static async initUpload(req: AuthenticatedRequest, res: Response) {
+  static async uploadFile(req: AuthenticatedRequest, res: Response) {
     try {
-      const { filename, mimeType, fileSize, recordId, description, tags } = req.body;
+      let filename: string;
+      let fileData: string; // base64
+      let mimeType: string;
+      let fileSizeBytes: number;
+      const { recordId, description, tags, uploadToken } = req.body;
+      
       const ownerHealthId = req.user?.healthId;
 
       if (!ownerHealthId) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      if (!filename || !mimeType || !fileSize) {
-        return res.status(400).json({
-          error: 'Filename, MIME type, and file size are required'
+      // Check if this is FormData upload (legacy) or JSON upload (new)
+      if (req.file) {
+        // Legacy FormData upload - convert buffer to base64
+        filename = req.file.originalname;
+        mimeType = req.file.mimetype;
+        fileSizeBytes = req.file.size;
+        fileData = req.file.buffer.toString('base64');
+        
+        logger.info('Legacy FormData upload received', {
+          filename,
+          mimeType,
+          size: fileSizeBytes
         });
+      } else {
+        // New JSON upload with base64
+        filename = req.body.filename;
+        fileData = req.body.fileData;
+        mimeType = req.body.mimeType;
+
+        if (!filename || !fileData || !mimeType) {
+          return res.status(400).json({
+            error: 'Filename, file data, and MIME type are required'
+          });
+        }
+
+        fileSizeBytes = Buffer.from(fileData, 'base64').length;
       }
 
       // Validate file size (50MB limit)
-      if (fileSize > 50 * 1024 * 1024) {
+      if (fileSizeBytes > 50 * 1024 * 1024) {
         return res.status(400).json({
           error: 'File size exceeds 50MB limit'
         });
       }
 
-      // Generate upload token
-      const uploadToken = crypto.randomBytes(32).toString('hex');
-      const storageKey = `${ownerHealthId}/${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
+      // Validate MIME type
+      const allowedMimeTypes = [
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv', 'text/markdown'
+      ];
 
-      // Create file upload record
+      if (!allowedMimeTypes.includes(mimeType)) {
+        return res.status(400).json({
+          error: `File type ${mimeType} not allowed`,
+          allowedTypes: allowedMimeTypes
+        });
+      }
+
+      // Calculate checksum
+      const fileBuffer = Buffer.from(fileData, 'base64');
+      const checksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+      // Create file upload record with base64 data
       const fileUpload = await prisma.fileUpload.create({
         data: {
           ownerHealthId,
-          recordId,
-          filename: `upload-${Date.now()}${path.extname(filename)}`,
+          recordId: recordId || null,
+          filename: `file-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`,
           originalName: filename,
           mimeType,
-          fileSize,
-          storageKey,
-          uploadToken,
-          status: 'UPLOADING',
-          description,
-          tags: tags || null
+          fileSize: fileSizeBytes,
+          checksum,
+          fileData, // Store base64 directly in DB
+          status: 'COMPLETED',
+          description: description || null,
+          tags: tags || null,
+          uploadedAt: new Date()
         }
       });
 
-      // Log upload initiation
+      // Log successful upload
       await AuditService.logAction({
         actorId: ownerHealthId,
         actorRole: req.user?.role || 'unknown',
-        action: 'FILE_UPLOAD_INITIATED',
+        action: 'FILE_UPLOADED',
         resourceType: 'FileUpload',
         resourceId: fileUpload.id,
         patientHealthId: ownerHealthId,
         metadata: {
           filename,
           mimeType,
-          fileSize,
-          uploadToken: uploadToken.substring(0, 8) + '...'
+          fileSize: fileSizeBytes,
+          checksum
         },
         ipAddress: req.ip,
         userAgent: req.get('User-Agent')
       });
 
-      res.status(201).json({
-        success: true,
-        data: {
-          uploadId: fileUpload.id,
-          uploadToken,
-          storageKey,
-          maxFileSize: 50 * 1024 * 1024,
-          allowedTypes: [
-            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-            'application/pdf', 'application/msword', 
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'text/plain', 'text/csv'
-          ],
-          chunkSize: 1024 * 1024 // 1MB chunks for large files
-        }
-      });
-
-    } catch (error) {
-      console.error('Error initializing upload:', error);
-      res.status(500).json({ error: 'Failed to initialize upload' });
-    }
-  }
-
-  /**
-   * Upload File
-   * POST /api/uploads/file
-   * Handles actual file upload with multer
-   */
-  static uploadFile = [
-    upload.single('file'),
-    async (req: AuthenticatedRequest, res: Response) => {
-      try {
-        const { uploadToken, description, tags, recordId } = req.body;
-        const ownerHealthId = req.user?.healthId;
-        const file = req.file;
-
-        if (!ownerHealthId) {
-          return res.status(401).json({ error: 'Authentication required' });
-        }
-
-        if (!file) {
-          return res.status(400).json({ error: 'No file uploaded' });
-        }
-
-        if (!uploadToken) {
-          return res.status(400).json({ error: 'Upload token required' });
-        }
-
-        // Find the upload record
-        console.log('Looking for upload token:', uploadToken);
-        console.log('Owner health ID:', ownerHealthId);
-        
-        const fileUpload = await prisma.fileUpload.findFirst({
-          where: {
-            uploadToken,
-            ownerHealthId,
-            status: 'UPLOADING'
-          }
-        });
-
-        console.log('Found fileUpload record:', fileUpload);
-
-        if (!fileUpload) {
-          // Clean up uploaded file
-          fs.unlinkSync(file.path);
-          return res.status(404).json({ error: 'Invalid upload token or upload not found' });
-        }
-
-        console.log('Calculating checksum for file:', file.path);
-        
-        // Calculate file checksum
-        const fileBuffer = fs.readFileSync(file.path);
-        const checksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-
-        console.log('Updating file record in database...');
-        
-        // Update file record with actual file info
-        const updatedFile = await prisma.fileUpload.update({
-          where: { id: fileUpload.id },
-          data: {
-            filename: file.filename,
-            originalName: file.originalname,
-            mimeType: file.mimetype,
-            fileSize: file.size,
-            checksum,
-            storageKey: file.path,
-            status: 'COMPLETED',
-            uploadedAt: new Date(),
-            uploadToken: null, // Clear token after use
-            description: description || fileUpload.description,
-            tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : fileUpload.tags,
-            recordId: recordId || fileUpload.recordId
-          }
-        });
-
-        console.log('File record updated successfully:', updatedFile.id);
-
-        // Log successful upload
-        await AuditService.logAction({
-          actorId: ownerHealthId,
-          actorRole: req.user?.role || 'unknown',
-          action: 'FILE_UPLOADED',
-          resourceType: 'FileUpload',
-          resourceId: updatedFile.id,
-          patientHealthId: ownerHealthId,
-          metadata: {
-            filename: file.originalname,
-            mimeType: file.mimetype,
-            fileSize: file.size,
-            checksum
-          },
-          ipAddress: req.ip,
-          userAgent: req.get('User-Agent')
-        });
-
-        console.log('Sending upload success response...');
-
-        res.status(200).json({
-          success: true,
-          data: {
-            fileId: updatedFile.id,
-            filename: updatedFile.originalName,
-            mimeType: updatedFile.mimeType,
-            fileSize: updatedFile.fileSize,
-            checksum: updatedFile.checksum,
-            uploadedAt: updatedFile.uploadedAt,
-            description: updatedFile.description,
-            tags: updatedFile.tags
-          },
-          message: 'File uploaded successfully'
-        });
-
-      } catch (error) {
-        console.error('Error uploading file:', error);
-
-        // Clean up file if upload failed
-        if (req.file && fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-
-        if (error instanceof multer.MulterError) {
-          if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'File size exceeds 50MB limit' });
-          }
-          if (error.code === 'LIMIT_FILE_COUNT') {
-            return res.status(400).json({ error: 'Too many files. Maximum 10 files allowed' });
-          }
-        }
-
-        res.status(500).json({ error: 'Failed to upload file' });
-      }
-    }
-  ];
-
-  /**
-   * Complete Upload
-   * PUT /api/uploads/complete
-   * Confirms upload completion and registers file reference
-   */
-  static async completeUpload(req: AuthenticatedRequest, res: Response) {
-    try {
-      const { uploadToken, uploadId, recordId, description, tags } = req.body;
-      const ownerHealthId = req.user?.healthId;
-
-      if (!ownerHealthId) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      if (!uploadId && !uploadToken) {
-        return res.status(400).json({ error: 'Upload ID or upload token required' });
-      }
-
-      // Find the upload record by uploadId (since uploadToken is cleared after upload)
-      let fileUpload;
-      if (uploadId) {
-        fileUpload = await prisma.fileUpload.findFirst({
-          where: {
-            id: uploadId,
-            ownerHealthId,
-            status: 'COMPLETED'
-          }
-        });
-      } else if (uploadToken) {
-        // Fallback: try to find by token (in case token wasn't cleared yet)
-        fileUpload = await prisma.fileUpload.findFirst({
-          where: {
-            uploadToken,
-            ownerHealthId
-          }
-        });
-      }
-
-      if (!fileUpload) {
-        return res.status(404).json({ error: 'Upload not found or not completed' });
-      }
-
-      // Update with additional metadata
-      const updatedFile = await prisma.fileUpload.update({
-        where: { id: uploadId },
-        data: {
-          recordId: recordId || fileUpload.recordId,
-          description: description || fileUpload.description,
-          tags: tags || fileUpload.tags
-        }
-      });
-
-      // Log upload completion
-      await AuditService.logAction({
-        actorId: ownerHealthId,
-        actorRole: req.user?.role || 'unknown',
-        action: 'FILE_UPLOAD_COMPLETED',
-        resourceType: 'FileUpload',
-        resourceId: updatedFile.id,
-        patientHealthId: ownerHealthId,
-        metadata: {
-          recordId,
-          description,
-          tags
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent')
+      logger.info('File uploaded successfully', {
+        fileId: fileUpload.id,
+        ownerHealthId,
+        filename,
+        fileSize: fileSizeBytes
       });
 
       res.status(200).json({
         success: true,
         data: {
-          fileId: updatedFile.id,
-          recordId: updatedFile.recordId,
-          description: updatedFile.description,
-          tags: updatedFile.tags
+          fileId: fileUpload.id,
+          filename: fileUpload.originalName,
+          mimeType: fileUpload.mimeType,
+          fileSize: fileUpload.fileSize,
+          checksum: fileUpload.checksum,
+          uploadedAt: fileUpload.uploadedAt,
+          description: fileUpload.description,
+          tags: fileUpload.tags
         },
-        message: 'Upload completed and registered successfully'
+        message: 'File uploaded successfully'
       });
 
     } catch (error) {
-      console.error('Error completing upload:', error);
-      res.status(500).json({ error: 'Failed to complete upload' });
+      logger.error('Error uploading file:', error);
+      res.status(500).json({ error: 'Failed to upload file' });
     }
   }
 
   /**
-   * Get File Metadata
-   * GET /api/uploads/:fileId
-   * Returns file metadata with access control
+   * Download File
+   * GET /api/uploads/file/:fileId
+   * Returns file as base64 or raw buffer
    */
-  static async getFileMetadata(req: AuthenticatedRequest, res: Response) {
+  static async downloadFile(req: AuthenticatedRequest, res: Response) {
     try {
       const { fileId } = req.params;
-      const userId = req.user?.healthId;
-      const userRole = req.user?.role;
+      const ownerHealthId = req.user?.healthId;
+      const asBase64 = req.query.base64 === 'true';
 
-      if (!userId) {
+      if (!ownerHealthId) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      const fileUpload = await prisma.fileUpload.findUnique({
-        where: { id: fileId },
-        include: {
-          owner: {
-            include: { healthProfile: true }
-          }
+      // Fetch file
+      const fileUpload = await prisma.fileUpload.findFirst({
+        where: {
+          id: fileId,
+          ownerHealthId // Only allow owner to download
         }
       });
 
@@ -426,348 +182,306 @@ export class UploadsController {
         return res.status(404).json({ error: 'File not found' });
       }
 
-      // Check access permissions
-      const canAccess = await UploadsController.checkFileAccess(userId, userRole || 'unknown', fileUpload);
-      if (!canAccess) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-
       // Log file access
-      // await this.logFileAccess(fileId, userId, 'METADATA_VIEW', req);
-
-      res.status(200).json({
-        success: true,
-        data: {
-          id: fileUpload.id,
+      await AuditService.logAction({
+        actorId: ownerHealthId,
+        actorRole: req.user?.role || 'unknown',
+        action: 'FILE_DOWNLOADED',
+        resourceType: 'FileUpload',
+        resourceId: fileUpload.id,
+        patientHealthId: ownerHealthId,
+        metadata: {
           filename: fileUpload.originalName,
           mimeType: fileUpload.mimeType,
-          fileSize: fileUpload.fileSize,
-          description: fileUpload.description,
-          tags: fileUpload.tags,
-          uploadedAt: fileUpload.uploadedAt,
-          ownerName: fileUpload.owner.healthProfile ? 
-            `${fileUpload.owner.healthProfile.firstName} ${fileUpload.owner.healthProfile.lastName}` : 
-            'Unknown',
-          recordId: fileUpload.recordId,
-          status: fileUpload.status
+          fileSize: fileUpload.fileSize
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+
+      // Record file access
+      await prisma.fileAccess.create({
+        data: {
+          fileId: fileUpload.id,
+          accessorId: ownerHealthId,
+          action: 'DOWNLOAD',
+          ipAddress: req.ip || null,
+          userAgent: req.get('User-Agent') || null
         }
       });
 
-    } catch (error) {
-      console.error('Error getting file metadata:', error);
-      res.status(500).json({ error: 'Failed to get file metadata' });
-    }
-  }
-
-  /**
-   * Download File
-   * GET /api/uploads/:fileId/download
-   * Serves file for download with access control
-   */
-  static async downloadFile(req: AuthenticatedRequest, res: Response) {
-    try {
-      const { fileId } = req.params;
-      const userId = req.user?.healthId;
-      const userRole = req.user?.role;
-
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required' });
+      if (asBase64) {
+        // Return as JSON with base64 data
+        return res.json({
+          success: true,
+          data: {
+            fileId: fileUpload.id,
+            filename: fileUpload.originalName,
+            mimeType: fileUpload.mimeType,
+            fileSize: fileUpload.fileSize,
+            fileData: fileUpload.fileData,
+            uploadedAt: fileUpload.uploadedAt
+          }
+        });
+      } else {
+        // Return as raw file buffer
+        const fileBuffer = Buffer.from(fileUpload.fileData, 'base64');
+        
+        res.setHeader('Content-Type', fileUpload.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${fileUpload.originalName}"`);
+        res.setHeader('Content-Length', fileBuffer.length);
+        
+        return res.send(fileBuffer);
       }
-
-      const fileUpload = await prisma.fileUpload.findUnique({
-        where: { id: fileId }
-      });
-
-      if (!fileUpload || fileUpload.status !== 'COMPLETED') {
-        return res.status(404).json({ error: 'File not found or not available' });
-      }
-
-      // Check access permissions
-      const canAccess = await UploadsController.checkFileAccess(userId, userRole || 'unknown', fileUpload);
-      if (!canAccess) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
-
-      // Check if file exists on disk
-      if (!fs.existsSync(fileUpload.storageKey)) {
-        return res.status(404).json({ error: 'File not found on storage' });
-      }
-
-      // Log file download (temporarily disabled)
-      // await this.logFileAccess(fileId, userId, 'DOWNLOAD', req);
-
-      // Set appropriate headers
-      res.setHeader('Content-Type', fileUpload.mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileUpload.originalName}"`);
-      res.setHeader('Content-Length', fileUpload.fileSize.toString());
-
-      // Stream file to response
-      const fileStream = fs.createReadStream(fileUpload.storageKey);
-      fileStream.pipe(res);
 
     } catch (error) {
-      console.error('Error downloading file:', error);
+      logger.error('Error downloading file:', error);
       res.status(500).json({ error: 'Failed to download file' });
     }
   }
 
   /**
-   * View File (in-browser)
-   * GET /api/uploads/:fileId/view
-   * Serves file for viewing in browser
+   * List Files
+   * GET /api/uploads/files
+   * Lists all files for authenticated user
    */
-  static async viewFile(req: AuthenticatedRequest, res: Response) {
+  static async listFiles(req: AuthenticatedRequest, res: Response) {
     try {
-      const { fileId } = req.params;
-      const userId = req.user?.healthId;
-      const userRole = req.user?.role;
+      const ownerHealthId = req.user?.healthId;
 
-      if (!userId) {
+      if (!ownerHealthId) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
-      const fileUpload = await prisma.fileUpload.findUnique({
-        where: { id: fileId }
-      });
+      const { recordId, mimeType, limit = 50, offset = 0 } = req.query;
 
-      if (!fileUpload || fileUpload.status !== 'COMPLETED') {
-        return res.status(404).json({ error: 'File not found or not available' });
+      const where: any = {
+        ownerHealthId,
+        status: 'COMPLETED'
+      };
+
+      if (recordId) {
+        where.recordId = recordId as string;
       }
 
-      // Check access permissions
-      const canAccess = await UploadsController.checkFileAccess(userId, userRole || 'unknown', fileUpload);
-      if (!canAccess) {
-        return res.status(403).json({ error: 'Access denied' });
+      if (mimeType) {
+        where.mimeType = mimeType as string;
       }
-
-      // Check if file exists on disk
-      if (!fs.existsSync(fileUpload.storageKey)) {
-        return res.status(404).json({ error: 'File not found on storage' });
-      }
-
-      // Log file view (temporarily disabled)
-      // await this.logFileAccess(fileId, userId, 'VIEW', req);
-
-      // Set appropriate headers for inline viewing
-      res.setHeader('Content-Type', fileUpload.mimeType);
-      res.setHeader('Content-Disposition', `inline; filename="${fileUpload.originalName}"`);
-      res.setHeader('Content-Length', fileUpload.fileSize.toString());
-
-      // Stream file to response
-      const fileStream = fs.createReadStream(fileUpload.storageKey);
-      fileStream.pipe(res);
-
-    } catch (error) {
-      console.error('Error viewing file:', error);
-      res.status(500).json({ error: 'Failed to view file' });
-    }
-  }
-
-  /**
-   * List User Files
-   * GET /api/uploads/my-files
-   * Lists files owned by the authenticated user
-   */
-  static async listUserFiles(req: AuthenticatedRequest, res: Response) {
-    try {
-      const userId = req.user?.healthId;
-      const { recordId, mimeType, limit = 20, page = 1 } = req.query;
-
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const skip = (Number(page) - 1) * Number(limit);
 
       const files = await prisma.fileUpload.findMany({
-        where: {
-          ownerHealthId: userId,
-          status: 'COMPLETED',
-          ...(recordId && { recordId: recordId as string }),
-          ...(mimeType && { mimeType: { startsWith: mimeType as string } })
-        },
+        where,
         select: {
           id: true,
+          filename: true,
           originalName: true,
           mimeType: true,
           fileSize: true,
+          checksum: true,
           description: true,
           tags: true,
           uploadedAt: true,
+          createdAt: true,
           recordId: true
+          // Don't include fileData in list view
         },
         orderBy: { uploadedAt: 'desc' },
-        skip,
-        take: Number(limit)
+        take: Number(limit),
+        skip: Number(offset)
       });
 
-      const totalCount = await prisma.fileUpload.count({
-        where: {
-          ownerHealthId: userId,
-          status: 'COMPLETED',
-          ...(recordId && { recordId: recordId as string }),
-          ...(mimeType && { mimeType: { startsWith: mimeType as string } })
-        }
-      });
+      const total = await prisma.fileUpload.count({ where });
 
-      res.status(200).json({
+      res.json({
         success: true,
-        data: {
-          files,
-          pagination: {
-            page: Number(page),
-            limit: Number(limit),
-            total: totalCount,
-            pages: Math.ceil(totalCount / Number(limit))
-          }
+        files: files,
+        data: files, // For backward compatibility
+        pagination: {
+          total,
+          limit: Number(limit),
+          offset: Number(offset),
+          hasMore: total > Number(offset) + Number(limit)
         }
       });
 
     } catch (error) {
-      console.error('Error listing user files:', error);
+      logger.error('Error listing files:', error);
       res.status(500).json({ error: 'Failed to list files' });
     }
   }
 
   /**
    * Delete File
-   * DELETE /api/uploads/:fileId
-   * Deletes file and metadata
+   * DELETE /api/uploads/file/:fileId
+   * Deletes a file from database
    */
   static async deleteFile(req: AuthenticatedRequest, res: Response) {
     try {
       const { fileId } = req.params;
-      const userId = req.user?.healthId;
+      const ownerHealthId = req.user?.healthId;
 
-      if (!userId) {
+      if (!ownerHealthId) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      // Check if file exists and belongs to user
+      const fileUpload = await prisma.fileUpload.findFirst({
+        where: {
+          id: fileId,
+          ownerHealthId
+        }
+      });
+
+      if (!fileUpload) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
+      // Delete file record (cascade will delete FileAccess records)
+      await prisma.fileUpload.delete({
+        where: { id: fileId }
+      });
+
+      // Log file deletion
+      await AuditService.logAction({
+        actorId: ownerHealthId,
+        actorRole: req.user?.role || 'unknown',
+        action: 'FILE_DELETED',
+        resourceType: 'FileUpload',
+        resourceId: fileId,
+        patientHealthId: ownerHealthId,
+        metadata: {
+          filename: fileUpload.originalName,
+          mimeType: fileUpload.mimeType,
+          fileSize: fileUpload.fileSize
+        },
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+
+      logger.info('File deleted successfully', {
+        fileId,
+        ownerHealthId,
+        filename: fileUpload.originalName
+      });
+
+      res.json({
+        success: true,
+        message: 'File deleted successfully'
+      });
+
+    } catch (error) {
+      logger.error('Error deleting file:', error);
+      res.status(500).json({ error: 'Failed to delete file' });
+    }
+  }
+
+  /**
+   * Get File Metadata
+   * GET /api/uploads/file/:fileId/metadata
+   * Returns file metadata without file data
+   */
+  static async getFileMetadata(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { fileId } = req.params;
+      const ownerHealthId = req.user?.healthId;
+
+      if (!ownerHealthId) {
         return res.status(401).json({ error: 'Authentication required' });
       }
 
       const fileUpload = await prisma.fileUpload.findFirst({
         where: {
           id: fileId,
-          ownerHealthId: userId
+          ownerHealthId
+        },
+        select: {
+          id: true,
+          filename: true,
+          originalName: true,
+          mimeType: true,
+          fileSize: true,
+          checksum: true,
+          description: true,
+          tags: true,
+          uploadedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          recordId: true,
+          status: true
         }
       });
 
       if (!fileUpload) {
-        return res.status(404).json({ error: 'File not found or access denied' });
+        return res.status(404).json({ error: 'File not found' });
       }
 
-      // Delete physical file
-      if (fs.existsSync(fileUpload.storageKey)) {
-        fs.unlinkSync(fileUpload.storageKey);
-      }
-
-      // Update status to deleted (soft delete)
-      await prisma.fileUpload.update({
-        where: { id: fileId },
-        data: { status: 'DELETED' }
-      });
-
-      // Log file deletion
-      await AuditService.logAction({
-        actorId: userId,
-        actorRole: req.user?.role || 'unknown',
-        action: 'FILE_DELETED',
-        resourceType: 'FileUpload',
-        resourceId: fileId,
-        patientHealthId: userId,
-        metadata: {
-          filename: fileUpload.originalName,
-          mimeType: fileUpload.mimeType
-        },
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent')
-      });
-
-      res.status(200).json({
+      res.json({
         success: true,
-        message: 'File deleted successfully'
+        data: fileUpload
       });
 
     } catch (error) {
-      console.error('Error deleting file:', error);
-      res.status(500).json({ error: 'Failed to delete file' });
+      logger.error('Error fetching file metadata:', error);
+      res.status(500).json({ error: 'Failed to fetch file metadata' });
     }
   }
 
   /**
-   * Check if user can access file
-   * Private helper method
+   * Get File Access History
+   * GET /api/uploads/file/:fileId/access-history
+   * Returns access history for a file
    */
-  private static async checkFileAccess(userId: string, userRole: string, fileUpload: any): Promise<boolean> {
-    // Owner can always access
-    if (fileUpload.ownerHealthId === userId) {
-      return true;
-    }
-
-    // Admin can access all files
-    if (userRole === 'admin') {
-      return true;
-    }
-
-    // For healthcare providers, check if they have consent to access patient's files
-    if (userRole === 'doctor' && fileUpload.recordId) {
-      // This would integrate with the consent system
-      // For now, we'll implement basic logic
-      const consent = await prisma.consent.findFirst({
-        where: {
-          patientId: fileUpload.ownerHealthId,
-          providerId: userId,
-          status: 'ACTIVE',
-          expiresAt: {
-            gt: new Date()
-          }
-        }
-      });
-
-      return consent !== null;
-    }
-
-    return false;
-  }
-
-  /**
-   * Log file access
-   * Private helper method
-   */
-  private static async logFileAccess(fileId: string, accessorId: string, action: string, req: AuthenticatedRequest): Promise<void> {
+  static async getFileAccessHistory(req: AuthenticatedRequest, res: Response) {
     try {
-      // Create file access record
-      await prisma.fileAccess.create({
-        data: {
-          fileId,
-          accessorId,
-          action,
-          ipAddress: req.ip,
-          userAgent: req.get('User-Agent')
+      const { fileId } = req.params;
+      const ownerHealthId = req.user?.healthId;
+
+      if (!ownerHealthId) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      // Verify file ownership
+      const fileUpload = await prisma.fileUpload.findFirst({
+        where: {
+          id: fileId,
+          ownerHealthId
         }
       });
 
-      // Also log in audit trail
-      const fileUpload = await prisma.fileUpload.findUnique({
-        where: { id: fileId }
+      if (!fileUpload) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
+      // Get access history
+      const accessHistory = await prisma.fileAccess.findMany({
+        where: { fileId },
+        include: {
+          accessor: {
+            select: {
+              healthId: true,
+              role: true,
+              healthProfile: {
+                select: {
+                  firstName: true,
+                  lastName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { accessedAt: 'desc' },
+        take: 100
       });
 
-      if (fileUpload) {
-        await AuditService.logAction({
-          actorId: accessorId,
-          actorRole: req.user?.role || 'unknown',
-          action: `FILE_${action}`,
-          resourceType: 'FileUpload',
-          resourceId: fileId,
-          patientHealthId: fileUpload.ownerHealthId,
-          metadata: {
-            filename: fileUpload.originalName,
-            action
-          },
-          ipAddress: req.ip,
-          userAgent: req.get('User-Agent')
-        });
-      }
+      res.json({
+        success: true,
+        data: accessHistory
+      });
+
     } catch (error) {
-      console.error('Error logging file access:', error);
+      logger.error('Error fetching file access history:', error);
+      res.status(500).json({ error: 'Failed to fetch access history' });
     }
   }
 }
+
+export default UploadsController;
