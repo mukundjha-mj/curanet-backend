@@ -28,8 +28,8 @@ function normalizePublicAppUrl(rawValue: string, envName: string): string {
   return parsed.toString().replace(/\/$/, '');
 }
 
-function buildFrontendLink(baseUrl: string, queryKey: string, token: string): string {
-  const url = new URL(baseUrl);
+function buildFrontendLink(baseUrl: string, pathname: string, queryKey: string, token: string): string {
+  const url = new URL(pathname, `${baseUrl}/`);
   url.searchParams.set(queryKey, token);
   return url.toString();
 }
@@ -191,7 +191,7 @@ function buildVerificationHtml(verifyLink: string) {
 }
 
 export async function sendVerificationEmail(to: string, token: string) {
-  const verifyLink = buildFrontendLink(FRONTEND_URL, 'verifyToken', token);
+  const verifyLink = buildFrontendLink(FRONTEND_URL, '/verify', 'token', token);
   const html = buildVerificationHtml(verifyLink);
   await sendEmailWithProviders(to, 'CuraNet - Verify your email', html);
 }
@@ -241,7 +241,7 @@ function buildPasswordResetHtml(resetLink: string) {
 }
 
 export async function sendPasswordResetEmail(to: string, token: string) {
-  const resetLink = buildFrontendLink(FRONTEND_URL, 'resetToken', token);
+  const resetLink = buildFrontendLink(FRONTEND_URL, '/reset-password', 'token', token);
   const html = buildPasswordResetHtml(resetLink);
   await sendEmailWithProviders(to, 'CuraNet - Reset your password', html);
 }
