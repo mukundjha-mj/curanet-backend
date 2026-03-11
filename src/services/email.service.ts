@@ -23,8 +23,55 @@ const getEmailFrom = (): string => {
 const FRONTEND_URL = getFrontendUrl();
 const EMAIL_FROM = getEmailFrom();
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const PUBLIC_EMAIL_PROVIDERS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'icloud.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+]);
 
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+
+function extractEmailAddress(input: string): string {
+  const match = input.match(/<([^>]+)>/);
+  return (match ? match[1] : input).trim().toLowerCase();
+}
+
+function getEmailDomain(input: string): string {
+  const email = extractEmailAddress(input);
+  const atIndex = email.lastIndexOf('@');
+
+  if (atIndex === -1 || atIndex === email.length - 1) {
+    throw new Error('EMAIL_FROM must be a valid email address or display-name format like "CuraNet <noreply@curanet.in>"');
+  }
+
+  return email.slice(atIndex + 1);
+}
+
+function validateEmailProviderConfiguration(): void {
+  const senderDomain = getEmailDomain(EMAIL_FROM);
+  const verifiedDomain = process.env.RESEND_VERIFIED_DOMAIN?.trim().toLowerCase();
+
+  if (resend && PUBLIC_EMAIL_PROVIDERS.has(senderDomain)) {
+    throw new Error(
+      `EMAIL_FROM uses public mailbox domain "${senderDomain}" which Resend will reject. Use a sender on your verified domain, for example "CuraNet <noreply@curanet.in>".`
+    );
+  }
+
+  if (resend && verifiedDomain && senderDomain !== verifiedDomain) {
+    throw new Error(
+      `EMAIL_FROM domain "${senderDomain}" does not match RESEND_VERIFIED_DOMAIN "${verifiedDomain}".`
+    );
+  }
+}
+
+validateEmailProviderConfiguration();
 
 async function sendEmailWithProviders(to: string, subject: string, html: string) {
   // Priority 1: Resend

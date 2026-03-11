@@ -33,6 +33,8 @@ declare namespace NodeJS {
     SMTP_PASS?: string;
     SENDGRID_API_KEY?: string;
     SENDGRID_KEY?: string;
+    RESEND_API_KEY?: string;
+    RESEND_VERIFIED_DOMAIN?: string;
     EMAIL_FROM?: string;
     
     // Admin
