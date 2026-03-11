@@ -157,11 +157,14 @@ function buildEmailLayout(params: {
   subtitle: string;
   bodyHtml: string;
 }) {
+  const logoUrl = `${FRONTEND_URL}/CuraNet.png`;
+
   return `
-    <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Segoe UI,Arial,sans-serif;color:#10233a;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5edf7;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.06);">
-        <div style="padding:24px 28px;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;">
-          <div style="font-size:20px;font-weight:700;letter-spacing:.2px;">CuraNet</div>
+    <div style="margin:0;padding:24px;background:linear-gradient(135deg,#050b1f 0%,#0a1738 45%,#102b62 100%);font-family:Segoe UI,Arial,sans-serif;color:#10233a;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbeafe;border-radius:18px;overflow:hidden;box-shadow:0 14px 40px rgba(8,22,64,.3);">
+        <div style="padding:24px 28px;background:linear-gradient(135deg,#0b1733,#12377a);color:#fff;text-align:center;">
+          <img src="${logoUrl}" alt="CuraNet" width="84" height="84" style="display:block;margin:0 auto 12px auto;max-width:84px;height:auto;" />
+          <div style="font-size:22px;font-weight:700;letter-spacing:.2px;">CuraNet</div>
           <div style="font-size:13px;opacity:.9;margin-top:4px;">Healthcare Platform</div>
         </div>
         <div style="padding:28px;">
@@ -169,7 +172,7 @@ function buildEmailLayout(params: {
           <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#334155;">${params.subtitle}</p>
           ${params.bodyHtml}
         </div>
-        <div style="padding:16px 28px;background:#f8fbff;border-top:1px solid #e5edf7;font-size:12px;color:#64748b;line-height:1.6;">
+        <div style="padding:16px 28px;background:#f1f5ff;border-top:1px solid #dbeafe;font-size:12px;color:#475569;line-height:1.6;">
           Sent by CuraNet. If this wasn't you, you can safely ignore this email.
         </div>
       </div>
