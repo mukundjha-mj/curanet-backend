@@ -278,26 +278,45 @@ model HealthIdAudit {
 }
 
 model EmergencyShare {
-  id              String    @id @default(cuid())
+  id              String               @id @default(cuid())
   patientHealthId String
-  tokenHash       String    @unique
-  shareId         String    @unique @default(cuid())
+  tokenHash       String               @unique
+  shareId         String               @unique @default(cuid())
+  shortUrl        String?
   scope           Json
   expiresAt       DateTime
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime             @default(now())
   createdBy       String
-  used            Boolean   @default(false)
+  used            Boolean              @default(false)
   usedAt          DateTime?
   accessedBy      String?
   accessLog       Json?
-  creator         User      @relation("EmergencyShareCreator", fields: [createdBy], references: [healthId])
-  patient         User      @relation(fields: [patientHealthId], references: [healthId], onDelete: Cascade)
+  accessCount     Int                  @default(0)
+  lastAccessedAt  DateTime?
+  accessLogs      EmergencyAccessLog[]
+  creator         User                 @relation("EmergencyShareCreator", fields: [createdBy], references: [healthId])
+  patient         User                 @relation(fields: [patientHealthId], references: [healthId], onDelete: Cascade)
 
   @@index([tokenHash])
   @@index([shareId])
   @@index([patientHealthId])
   @@index([expiresAt])
   @@map("emergency_shares")
+}
+
+model EmergencyAccessLog {
+  id            String         @id @default(cuid())
+  shareId       String
+  share         EmergencyShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  accessedAt    DateTime       @default(now())
+  ipAddress     String?
+  userAgent     String?
+  scope         Json
+  dataAccessed  Json?
+
+  @@index([shareId])
+  @@index([accessedAt])
+  @@map("emergency_access_logs")
 }
 
 model Appointment {

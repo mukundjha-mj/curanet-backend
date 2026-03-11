@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import runtimeConfig from '../config/runtime-config';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 import logger from '../utils/logger';
@@ -204,8 +205,8 @@ export const cleanupTokenBlacklist = (): void => {
 const failedAttempts = new Map<string, { count: number; lockUntil: number }>();
 
 export const trackFailedLogin = (email: string): boolean => {
-    const maxAttempts = 5;
-    const lockoutDuration = 15 * 60 * 1000; // 15 minutes
+    const maxAttempts = runtimeConfig.maxLoginAttempts;
+    const lockoutDuration = runtimeConfig.loginAttemptLockoutMinutes * 60 * 1000;
     const now = Date.now();
 
     let attempts = failedAttempts.get(email);

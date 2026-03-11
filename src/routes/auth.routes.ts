@@ -2,6 +2,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import authController from '../controllers/auth.controller';
 import type { Request, Response } from 'express';
+import runtimeConfig from '../config/runtime-config';
 import { 
     authenticateToken
 } from '../middlewares/authMiddleware';
@@ -21,16 +22,16 @@ type AuthedRequest = Request & {
 
 // Rate limiting for auth endpoints
 const authRateLimit = rateLimit({
-	windowMs: 15 * 60 * 1000, // 15 minutes
-	max: 10,
+    windowMs: runtimeConfig.rateLimitWindowMinutes * 60 * 1000,
+    max: runtimeConfig.authRateLimitMax,
 	standardHeaders: true,
 	legacyHeaders: false,
 	message: 'Too many authentication attempts, please try again later.'
 });
 
 const strictRateLimit = rateLimit({
-	windowMs: 60 * 1000, // 1 minute
-	max: 5,
+    windowMs: runtimeConfig.strictRateLimitWindowSeconds * 1000,
+    max: runtimeConfig.strictRateLimitMax,
 	standardHeaders: true,
 	legacyHeaders: false,
 	message: 'Too many requests, please slow down.'

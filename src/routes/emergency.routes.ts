@@ -13,6 +13,9 @@ router.post('/share', authenticateToken, EmergencyController.createEmergencyShar
 // List patient's emergency shares (authenticated)
 router.get('/shares', authenticateToken, EmergencyController.listEmergencyShares);
 
+// Get access logs for a specific share (authenticated)
+router.get('/share/:shareId/logs', authenticateToken, EmergencyController.getShareAccessLogs);
+
 // Revoke emergency share (authenticated)
 router.delete('/share/:shareId', authenticateToken, EmergencyController.revokeEmergencyShare);
 

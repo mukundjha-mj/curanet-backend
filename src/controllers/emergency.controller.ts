@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import AuditService from '../services/audit.service';
+import runtimeConfig from '../config/runtime-config';
 
 const prisma = new PrismaClient();
 
@@ -17,6 +18,18 @@ interface AuthenticatedRequest extends Request {
 }
 
 export class EmergencyController {
+  private static normalizeScope(rawScope: unknown): string[] {
+    if (Array.isArray(rawScope)) {
+      return rawScope.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    }
+
+    if (typeof rawScope === 'string' && rawScope.trim().length > 0) {
+      return [rawScope.trim()];
+    }
+
+    return ['emergency'];
+  }
+
   /**
    * Create Emergency Share Link
    * POST /api/emergency/share
@@ -24,7 +37,7 @@ export class EmergencyController {
    */
   static async createEmergencyShare(req: AuthenticatedRequest, res: Response) {
     try {
-      const { expires_in_seconds = 3600, scope = ['basic', 'emergency', 'allergies'] } = req.body;
+      const { expires_in_seconds = runtimeConfig.emergencyShareDefaultExpirySeconds, scope = ['basic', 'emergency', 'allergies'] } = req.body;
       const patientHealthId = req.user?.healthId;
 
       if (!patientHealthId) {
@@ -43,14 +56,14 @@ export class EmergencyController {
 
       // Generate cryptographically secure tokens
       const shareId = crypto.randomUUID();
-      const token = crypto.randomBytes(32).toString('hex');
+      const token = crypto.randomBytes(8).toString('hex'); // 16 character hex string
       const tokenHash = await bcrypt.hash(token, 12);
 
       // Calculate expiration time
       const expiresAt = new Date(Date.now() + expires_in_seconds * 1000);
 
       // Validate expiration time (max 24 hours for security)
-      const maxExpiry = 24 * 60 * 60; // 24 hours in seconds
+      const maxExpiry = runtimeConfig.emergencyShareMaxExpirySeconds;
       if (expires_in_seconds > maxExpiry) {
         return res.status(400).json({ 
           error: 'Maximum expiration time is 24 hours',
@@ -58,12 +71,27 @@ export class EmergencyController {
         });
       }
 
-      // Create emergency share record
+      // Create a public URL that responders can open in the frontend app.
+      const frontendUrl = process.env.FRONTEND_URL?.trim();
+      const baseUrl = process.env.BASE_URL?.trim();
+      const requestOrigin = req.get('origin')?.trim();
+      const hostFallback = req.get('host') ? `${req.protocol}://${req.get('host')}` : undefined;
+      const publicBaseUrl = frontendUrl || baseUrl || requestOrigin || hostFallback;
+
+      if (!publicBaseUrl) {
+        return res.status(500).json({ error: 'Unable to build emergency link URL. Configure FRONTEND_URL.' });
+      }
+
+      const normalizedBase = publicBaseUrl.replace(/\/$/, '');
+      const shortUrl = `${normalizedBase}/one/${token}`;
+
+      // Create emergency share record with shortUrl
       const emergencyShare = await prisma.emergencyShare.create({
         data: {
           shareId,
           tokenHash,
           patientHealthId,
+          shortUrl,
           scope: scope,
           expiresAt,
           createdBy: patientHealthId
@@ -86,10 +114,6 @@ export class EmergencyController {
         ipAddress: req.ip,
         userAgent: req.get('User-Agent')
       });
-
-      // Create short URL
-      const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
-      const shortUrl = `${baseUrl}/one/${token}`;
 
       res.status(201).json({
         success: true,
@@ -123,10 +147,9 @@ export class EmergencyController {
         return res.status(400).json({ error: 'Token required' });
       }
 
-      // Find all non-expired, non-used emergency shares
+      // Find all non-expired emergency shares (allow multiple accesses)
       const emergencyShares = await prisma.emergencyShare.findMany({
         where: {
-          used: false,
           expiresAt: {
             gt: new Date()
           }
@@ -169,27 +192,53 @@ export class EmergencyController {
 
         return res.status(404).json({ 
           error: 'Invalid or expired emergency link',
-          message: 'This emergency access link is either invalid, expired, or has already been used.'
+          message: 'This emergency access link is either invalid or expired.'
         });
       }
 
-      // Mark token as used
-      await prisma.emergencyShare.update({
-        where: { id: validShare.id },
-        data: {
-          used: true,
-          usedAt: new Date(),
-          accessedBy: req.ip || 'UNKNOWN',
-          accessLog: {
-            ip: req.ip,
-            userAgent: req.get('User-Agent'),
-            timestamp: new Date().toISOString()
-          }
-        }
-      });
+      const normalizedScope = EmergencyController.normalizeScope(validShare.scope);
 
       // Extract emergency data based on scope
-      const emergencyData = this.extractEmergencyData(validShare.patient, validShare.scope as string[]);
+      const emergencyData = EmergencyController.extractEmergencyData(validShare.patient, normalizedScope);
+
+      // Best-effort access counters/logging. Data access should not fail if audit writes fail.
+      const now = new Date();
+      let accessCount = (validShare as any).accessCount ?? 0;
+      let lastAccessedAt = now;
+
+      try {
+        const updatedShare = await prisma.emergencyShare.update({
+          where: { id: validShare.id },
+          data: {
+            accessCount: { increment: 1 },
+            lastAccessedAt: now,
+            // Keep backward compatibility
+            used: true,
+            usedAt: validShare.usedAt || now,
+            accessedBy: req.ip || 'UNKNOWN'
+          }
+        });
+
+        accessCount = updatedShare.accessCount;
+        lastAccessedAt = updatedShare.lastAccessedAt || now;
+      } catch (updateError) {
+        console.error('Emergency share access counter update failed:', updateError);
+        accessCount = accessCount + 1;
+      }
+
+      try {
+        await prisma.emergencyAccessLog.create({
+          data: {
+            shareId: validShare.id,
+            ipAddress: req.ip || 'UNKNOWN',
+            userAgent: req.get('User-Agent') || 'UNKNOWN',
+            scope: normalizedScope as any,
+            dataAccessed: Object.keys(emergencyData) as any
+          }
+        });
+      } catch (logError) {
+        console.error('Emergency access log write failed:', logError);
+      }
 
       // Log successful emergency access
       await AuditService.logAction({
@@ -201,7 +250,7 @@ export class EmergencyController {
         patientHealthId: validShare.patientHealthId,
         reason: 'emergency',
         metadata: {
-          scope: validShare.scope,
+          scope: normalizedScope,
           accessedData: Object.keys(emergencyData),
           createdAt: validShare.createdAt.toISOString()
         },
@@ -212,15 +261,21 @@ export class EmergencyController {
       res.status(200).json({
         success: true,
         emergency_access: true,
-        accessed_at: new Date().toISOString(),
+        accessed_at: now.toISOString(),
         data: emergencyData,
-        warning: 'This is emergency access. Access has been logged for security purposes.',
-        scope: validShare.scope
+        warning: 'This is emergency access. All accesses are logged for security purposes.',
+        scope: normalizedScope,
+        accessCount,
+        lastAccessedAt: lastAccessedAt?.toISOString()
       });
 
     } catch (error) {
       console.error('Error accessing emergency share:', error);
-      res.status(500).json({ error: 'Failed to access emergency data' });
+      const message = error instanceof Error ? error.message : 'Failed to access emergency data';
+      res.status(500).json({
+        error: 'Failed to access emergency data',
+        ...(process.env.NODE_ENV !== 'production' ? { debug: message } : {})
+      });
     }
   }
 
@@ -247,12 +302,15 @@ export class EmergencyController {
         select: {
           id: true,
           shareId: true,
+          shortUrl: true,
           scope: true,
           expiresAt: true,
           createdAt: true,
           used: true,
           usedAt: true,
-          accessedBy: true
+          accessedBy: true,
+          accessCount: true,
+          lastAccessedAt: true
         },
         orderBy: {
           createdAt: 'desc'
@@ -452,6 +510,65 @@ export class EmergencyController {
     } catch (error) {
       console.error('Error getting emergency card:', error);
       res.status(500).json({ error: 'Failed to get emergency card data' });
+    }
+  }
+
+  /**
+   * Get Emergency Share Access Logs
+   * GET /api/emergency/share/:shareId/logs
+   * Returns access logs for a specific emergency share
+   */
+  static async getShareAccessLogs(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { shareId } = req.params;
+      const patientHealthId = req.user?.healthId;
+
+      if (!patientHealthId) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      // Verify the share belongs to this patient
+      const share = await prisma.emergencyShare.findFirst({
+        where: {
+          shareId,
+          patientHealthId
+        },
+        include: {
+          accessLogs: {
+            orderBy: {
+              accessedAt: 'desc'
+            }
+          }
+        }
+      });
+
+      if (!share) {
+        return res.status(404).json({ error: 'Emergency share not found' });
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          shareId: share.shareId,
+          shortUrl: share.shortUrl,
+          scope: share.scope,
+          expiresAt: share.expiresAt,
+          createdAt: share.createdAt,
+          accessCount: share.accessCount,
+          lastAccessedAt: share.lastAccessedAt,
+          accessLogs: share.accessLogs.map(log => ({
+            id: log.id,
+            accessedAt: log.accessedAt,
+            ipAddress: log.ipAddress,
+            userAgent: log.userAgent,
+            scope: log.scope
+          }))
+        }
+      });
+
+    } catch (error) {
+      console.error('Error getting share access logs:', error);
+      res.status(500).json({ error: 'Failed to get access logs' });
     }
   }
 }

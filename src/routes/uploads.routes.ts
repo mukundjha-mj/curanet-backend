@@ -2,13 +2,14 @@ import express from 'express';
 import multer from 'multer';
 import { UploadsController } from '../controllers/uploads.controller';
 import { authenticateToken } from '../middlewares/authMiddleware';
+import runtimeConfig from '../config/runtime-config';
 
 const router = express.Router();
 
 // Configure multer for memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+  limits: { fileSize: runtimeConfig.maxFileSizeBytes }
 });
 
 // Legacy endpoint alias

@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import logger from './utils/logger';
 import { requestTracking, initializeAPM } from './utils/apm';
+import runtimeConfig from './config/runtime-config';
 
 // Load environment variables
 dotenv.config();
@@ -35,6 +36,7 @@ import enhancedEncountersRoutes from './routes/enhanced-encounters.routes';
 import selfReportingRoutes from './routes/self-reporting.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import profileRoutes from './routes/profile.routes';
+import securityRoutes from './routes/security.routes';
 
 const app = express();
 
@@ -50,7 +52,7 @@ app.use(helmet({
 	},
 	crossOriginEmbedderPolicy: false, // Allow embedded resources
 	hsts: {
-		maxAge: 31536000,
+		maxAge: runtimeConfig.hstsMaxAge,
 		includeSubDomains: true,
 		preload: true
 	}
@@ -58,8 +60,8 @@ app.use(helmet({
 
 // Global rate limiter - 100 requests per 15 minutes per IP
 const limiter = rateLimit({
-	windowMs: 15 * 60 * 1000, // 15 minutes
-	max: 100,
+	windowMs: runtimeConfig.rateLimitWindowMinutes * 60 * 1000,
+	max: runtimeConfig.rateLimitMaxRequests,
 	standardHeaders: true,
 	legacyHeaders: false,
 	message: 'Too many requests from this IP, please try again later.',
@@ -97,7 +99,7 @@ app.use(cors(corsOptions));
 // Handle CORS preflight (OPTIONS) across-the-board using a regex (Express 5 compatible)
 app.options(/.*/, cors(corsOptions));
 // Handle CORS preflight (OPTIONS) for all API routes (Express 5 doesn't support '*')
-app.use(express.json({ limit: '25mb' })); // Increased for Base64 file uploads
+app.use(express.json({ limit: `${runtimeConfig.maxJsonBodySizeMb}mb` }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -126,6 +128,7 @@ app.use('/api/encounters', enhancedEncountersRoutes);
 app.use('/api/self-reporting', selfReportingRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/security', securityRoutes);
 
 // Health check endpoints for load balancers and monitoring
 app.get('/healthz', (_req, res) => res.status(200).json({ status: 'ok' }));

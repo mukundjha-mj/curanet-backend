@@ -1,6 +1,7 @@
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
 import crypto from 'crypto';
+import runtimeConfig from '../config/runtime-config';
 
 export interface FileValidationResult {
   isValid: boolean;
@@ -9,7 +10,7 @@ export interface FileValidationResult {
 }
 
 export class FileService {
-  private static readonly MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+  private static readonly MAX_FILE_SIZE = runtimeConfig.maxFileSizeBytes;
   private static readonly ALLOWED_MIME_TYPES = [
     // Images
     'image/jpeg',

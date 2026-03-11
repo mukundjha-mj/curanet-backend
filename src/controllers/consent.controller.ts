@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import runtimeConfig from '../config/runtime-config';
 
 type AuthedRequest = Request & { 
   user?: { 
@@ -74,7 +75,9 @@ export const requestConsent = async (req: AuthedRequest, res: Response) => {
 
     // Create consent request (expires in 48 hours, or 7 days in development)
     const expiresAt = new Date();
-    const hoursToAdd = process.env.NODE_ENV === 'production' ? 48 : 168; // 7 days in dev
+    const hoursToAdd = process.env.NODE_ENV === 'production'
+      ? runtimeConfig.consentRequestExpiryHoursProd
+      : runtimeConfig.consentRequestExpiryHoursDev;
     expiresAt.setHours(expiresAt.getHours() + hoursToAdd);
 
     const consentRequest = await prisma.consentRequest.create({

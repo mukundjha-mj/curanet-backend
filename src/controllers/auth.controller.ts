@@ -7,11 +7,22 @@ import { EventEmitter } from 'events';
 import { PrismaClient } from '@prisma/client';
 import EmailService from '../services/email.service';
 import OtpService from '../services/otp.service';
+import runtimeConfig from '../config/runtime-config';
 
 dotenv.config();
 
 const prisma = new PrismaClient();
 const authEventEmitter = new EventEmitter();
+
+// Listen for password reset email events
+authEventEmitter.on('send-password-reset-email', async (payload) => {
+    try {
+        await EmailService.sendPasswordResetEmail(payload.email, payload.token);
+        console.info(`[Auth] Password reset email sent to ${payload.email}`);
+    } catch (error) {
+        console.error(`[Auth] Failed to send password reset email to ${payload.email}:`, error);
+    }
+});
 
 // Helper types for requests with additional properties populated by middlewares
 type AuthenticatedRequest = Request & { user?: any };
@@ -115,8 +126,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         }
 
         // Enforce password policy (basic example)
-        if (password.length < 8) {
-            res.status(400).json({ message: 'Password must be at least 8 characters long' });
+        if (password.length < runtimeConfig.passwordMinLength) {
+            res.status(400).json({ message: `Password must be at least ${runtimeConfig.passwordMinLength} characters long` });
             return;
         }
 
@@ -124,15 +135,17 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         const pepperedPassword = addPepper(password);
         const passwordHash = await argon2.hash(pepperedPassword, {
             type: argon2.argon2id,
-            memoryCost: 2 ** 16, // 64 MB
-            timeCost: 3,
-            parallelism: 1,
+            memoryCost: runtimeConfig.argon2MemoryCost,
+            timeCost: runtimeConfig.argon2TimeCost,
+            parallelism: runtimeConfig.argon2Parallelism,
         });
 
         // Generate verification token (only if email provided)
         const verificationToken = normalizedEmail ? generateSecureToken() : '';
         const tokenHash = normalizedEmail ? hashToken(verificationToken) : '';
-        const tokenExpiry = normalizedEmail ? new Date(Date.now() + 24 * 60 * 60 * 1000) : new Date(); // 24 hours
+        const tokenExpiry = normalizedEmail
+            ? new Date(Date.now() + runtimeConfig.emailVerificationTokenExpiryHours * 60 * 60 * 1000)
+            : new Date();
 
         // Generate unique Health ID
         let healthId: string;
@@ -227,6 +240,13 @@ export const register = async (req: Request, res: Response): Promise<void> => {
                 await EmailService.sendVerificationEmail(normalizedEmail, verificationToken);
             } catch (e) {
                 console.warn('Email send failed (dev fallback used if configured):', e);
+            }
+
+            // Send a welcome email after successful signup
+            try {
+                await EmailService.sendWelcomeEmail(normalizedEmail, name);
+            } catch (e) {
+                console.warn('Welcome email send failed:', e);
             }
 
             // In development, log verification token only for real emails
@@ -395,7 +415,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
             (userAgent.includes('Mobile') && !userAgent.includes('Mozilla'));
 
         // Token expiry: 15 minutes for web, 30 days for mobile
-        const tokenExpiry = isMobile ? '30d' : '15m';
+        const tokenExpiry = isMobile
+            ? runtimeConfig.jwtAccessTokenExpiryMobile
+            : runtimeConfig.jwtAccessTokenExpiryWeb;
         console.log(`📱 Platform detected: ${isMobile ? 'Mobile' : 'Web'}, token expiry: ${tokenExpiry}`);
 
         // Generate tokens
@@ -408,7 +430,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         };
 
         const accessToken = jwt.sign(accessTokenPayload, getJwtSecret(), {
-            expiresIn: tokenExpiry,
+            expiresIn: tokenExpiry as any,
             algorithm: 'HS256'
         });
 
@@ -422,7 +444,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
                 userId: user.healthId!,
                 tokenHash: refreshTokenHash,
                 deviceFingerprint: deviceFingerprintToStore,
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+                expiresAt: new Date(Date.now() + runtimeConfig.jwtRefreshTokenExpiryDays * 24 * 60 * 60 * 1000),
                 lastUsedAt: new Date()
             }
         });
@@ -430,9 +452,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         // Set refresh token as HTTP-only cookie
         res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            secure: runtimeConfig.cookieSecure,
+            sameSite: runtimeConfig.cookieSameSite,
+            maxAge: runtimeConfig.jwtRefreshTokenExpiryDays * 24 * 60 * 60 * 1000
         });
 
         // Emit login event for audit service
@@ -513,10 +535,12 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
         const isMobile = platform === 'mobile' || platform === 'flutter' || platform === 'android' || platform === 'ios' ||
             userAgent.includes('Dart') || userAgent.includes('Flutter') ||
             (userAgent.includes('Mobile') && !userAgent.includes('Mozilla'));
-        const tokenExpiry = isMobile ? '30d' : '15m';
+        const tokenExpiry = isMobile
+            ? runtimeConfig.jwtAccessTokenExpiryMobile
+            : runtimeConfig.jwtAccessTokenExpiryWeb;
 
         const accessToken = jwt.sign(accessTokenPayload, getJwtSecret(), {
-            expiresIn: tokenExpiry,
+            expiresIn: tokenExpiry as any,
             algorithm: 'HS256'
         });
 
@@ -534,7 +558,7 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
                     userId: storedToken.userId,
                     tokenHash: newRefreshTokenHash,
                     deviceFingerprint: storedToken.deviceFingerprint,
-                    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                    expiresAt: new Date(Date.now() + runtimeConfig.jwtRefreshTokenExpiryDays * 24 * 60 * 60 * 1000),
                     lastUsedAt: new Date()
                 }
             });
@@ -543,9 +567,9 @@ export const refresh = async (req: CookieRequest, res: Response): Promise<void> 
         // Set new refresh token cookie (for web)
         res.cookie('refreshToken', newRefreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000
+            secure: runtimeConfig.cookieSecure,
+            sameSite: runtimeConfig.cookieSameSite,
+            maxAge: runtimeConfig.jwtRefreshTokenExpiryDays * 24 * 60 * 60 * 1000
         });
 
         // Return both tokens in body for mobile apps
@@ -609,7 +633,7 @@ export const requestPasswordReset = async (req: Request, res: Response): Promise
         if (user && user.status === 'active') {
             const resetToken = generateSecureToken();
             const tokenHash = hashToken(resetToken);
-            const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+            const tokenExpiry = new Date(Date.now() + runtimeConfig.passwordResetTokenExpiryHours * 60 * 60 * 1000);
 
             await prisma.passwordResetToken.create({
                 data: {
@@ -644,8 +668,8 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
             return;
         }
 
-        if (newPassword.length < 8) {
-            res.status(400).json({ message: 'Password must be at least 8 characters long' });
+        if (newPassword.length < runtimeConfig.passwordMinLength) {
+            res.status(400).json({ message: `Password must be at least ${runtimeConfig.passwordMinLength} characters long` });
             return;
         }
 
@@ -671,9 +695,9 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
         const pepperedPassword = addPepper(newPassword);
         const newPasswordHash = await argon2.hash(pepperedPassword, {
             type: argon2.argon2id,
-            memoryCost: 2 ** 16,
-            timeCost: 3,
-            parallelism: 1,
+            memoryCost: runtimeConfig.argon2MemoryCost,
+            timeCost: runtimeConfig.argon2TimeCost,
+            parallelism: runtimeConfig.argon2Parallelism,
         });
 
         // Update password and revoke all refresh tokens

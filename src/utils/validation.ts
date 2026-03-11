@@ -21,6 +21,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
 import logger from './logger';
+import runtimeConfig from '../config/runtime-config';
 
 /**
  * Validation middleware factory
@@ -96,7 +97,7 @@ export const commonSchemas = {
   
   // Password (production-grade requirements)
   password: z.string()
-    .min(8, 'Password must be at least 8 characters')
+    .min(runtimeConfig.passwordMinLength, `Password must be at least ${runtimeConfig.passwordMinLength} characters`)
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),

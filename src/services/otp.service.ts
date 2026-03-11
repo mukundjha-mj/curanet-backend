@@ -1,13 +1,17 @@
 import crypto from 'crypto';
 import prisma from '../utils/prisma';
 import logger from '../utils/logger';
+import runtimeConfig from '../config/runtime-config';
 
 class OtpService {
     /**
      * Generate a 6-digit OTP
      */
     generateOtp(): string {
-        return crypto.randomInt(100000, 999999).toString();
+        const digits = runtimeConfig.otpLength;
+        const min = 10 ** (digits - 1);
+        const max = (10 ** digits) - 1;
+        return crypto.randomInt(min, max + 1).toString();
     }
 
     /**
@@ -53,7 +57,7 @@ class OtpService {
      */
     async storeOtp(userId: string, phone: string, otp: string): Promise<void> {
         const otpHash = this.hashOtp(otp);
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        const expiresAt = new Date(Date.now() + runtimeConfig.otpExpiryMinutes * 60 * 1000);
 
         await prisma.phoneOtpVerification.create({
             data: {
@@ -88,13 +92,13 @@ class OtpService {
                 const recentAttempts = await prisma.phoneOtpVerification.findMany({
                     where: {
                         phone,
-                        createdAt: { gt: new Date(Date.now() - 10 * 60 * 1000) }
+                        createdAt: { gt: new Date(Date.now() - runtimeConfig.otpExpiryMinutes * 60 * 1000) }
                     }
                 });
 
                 const totalAttempts = recentAttempts.reduce((sum, v) => sum + v.attempts, 0);
                 
-                if (totalAttempts >= 5) {
+                if (totalAttempts >= runtimeConfig.otpMaxFailedAttempts) {
                     return { 
                         success: false, 
                         message: 'Too many failed attempts. Please request a new OTP.' 

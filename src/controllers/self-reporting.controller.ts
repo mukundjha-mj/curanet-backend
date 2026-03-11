@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import runtimeConfig from '../config/runtime-config';
 
 const prisma = new PrismaClient();
 
@@ -18,13 +19,14 @@ const checkRateLimit = (userId: string): boolean => {
     const now = Date.now();
     const key = `self-report-${userId}`;
     const limit = rateLimitStore.get(key);
+    const windowMs = runtimeConfig.selfReportingRateWindowMinutes * 60 * 1000;
     
     if (!limit || now > limit.resetTime) {
-        rateLimitStore.set(key, { count: 1, resetTime: now + 60 * 60 * 1000 }); // 1 hour
+        rateLimitStore.set(key, { count: 1, resetTime: now + windowMs });
         return true;
     }
     
-    if (limit.count >= 10) {
+    if (limit.count >= runtimeConfig.selfReportingRateLimit) {
         return false;
     }
     

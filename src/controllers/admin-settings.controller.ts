@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import runtimeConfig from '../config/runtime-config';
 
 const prisma = new PrismaClient();
 
@@ -38,7 +39,7 @@ const defaultSettings: SystemSettings = {
   allowRegistration: true,
   requireEmailVerification: true,
   requireAdminApproval: true, // Require admin approval for doctor accounts
-  maxFileUploadSize: 52428800, // 50MB
+  maxFileUploadSize: runtimeConfig.maxFileSizeBytes,
   allowedFileTypes: [
     'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff',
     'application/pdf', 'application/msword',
@@ -47,10 +48,10 @@ const defaultSettings: SystemSettings = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/plain', 'text/csv', 'application/dicom'
   ],
-  sessionTimeout: 60, // 1 hour
-  maxLoginAttempts: 5,
-  consentExpiryDays: 365, // 1 year default
-  emergencyShareExpiryHours: 24, // 1 day
+  sessionTimeout: runtimeConfig.sessionTimeoutMinutes,
+  maxLoginAttempts: runtimeConfig.maxLoginAttempts,
+  consentExpiryDays: runtimeConfig.consentExpiryDays,
+  emergencyShareExpiryHours: runtimeConfig.emergencyShareExpiryHours,
   systemMessage: null,
   systemMessageType: null,
   enableNotifications: true,
