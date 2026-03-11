@@ -324,10 +324,13 @@ export const verifyEmail = async (req: Request, res: Response): Promise<void> =>
             });
         });
 
-        try {
-            await EmailService.sendEmailVerifiedConfirmation(verification.user.email);
-        } catch (e) {
-            console.warn('Verified confirmation email send failed:', e);
+        const verifiedEmail = verification.user.email;
+        if (verifiedEmail) {
+            try {
+                await EmailService.sendEmailVerifiedConfirmation(verifiedEmail);
+            } catch (e) {
+                console.warn('Verified confirmation email send failed:', e);
+            }
         }
 
         res.json({ message: 'Email verified successfully' });
