@@ -4,12 +4,42 @@ import { Resend } from 'resend';
 
 dotenv.config();
 
+function normalizePublicAppUrl(rawValue: string, envName: string): string {
+  const primaryValue = rawValue
+    .split(',')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+
+  if (!primaryValue) {
+    throw new Error(`${envName} is set but does not contain a valid URL`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(primaryValue);
+  } catch {
+    throw new Error(`${envName} must be a valid absolute URL like "https://curanet.in"`);
+  }
+
+  parsed.hash = '';
+  parsed.search = '';
+  parsed.pathname = parsed.pathname.replace(/\/$/, '');
+
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function buildFrontendLink(baseUrl: string, queryKey: string, token: string): string {
+  const url = new URL(baseUrl);
+  url.searchParams.set(queryKey, token);
+  return url.toString();
+}
+
 const getFrontendUrl = (): string => {
   const value = process.env.FRONTEND_URL;
   if (!value) {
     throw new Error('FRONTEND_URL is not set in environment variables');
   }
-  return value;
+  return normalizePublicAppUrl(value, 'FRONTEND_URL');
 };
 
 const getEmailFrom = (): string => {
@@ -161,7 +191,7 @@ function buildVerificationHtml(verifyLink: string) {
 }
 
 export async function sendVerificationEmail(to: string, token: string) {
-  const verifyLink = `${FRONTEND_URL}?verifyToken=${encodeURIComponent(token)}`;
+  const verifyLink = buildFrontendLink(FRONTEND_URL, 'verifyToken', token);
   const html = buildVerificationHtml(verifyLink);
   await sendEmailWithProviders(to, 'CuraNet - Verify your email', html);
 }
@@ -211,7 +241,7 @@ function buildPasswordResetHtml(resetLink: string) {
 }
 
 export async function sendPasswordResetEmail(to: string, token: string) {
-  const resetLink = `${FRONTEND_URL}?resetToken=${encodeURIComponent(token)}`;
+  const resetLink = buildFrontendLink(FRONTEND_URL, 'resetToken', token);
   const html = buildPasswordResetHtml(resetLink);
   await sendEmailWithProviders(to, 'CuraNet - Reset your password', html);
 }
