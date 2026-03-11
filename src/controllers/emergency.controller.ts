@@ -7,6 +7,27 @@ import runtimeConfig from '../config/runtime-config';
 
 const prisma = new PrismaClient();
 
+function normalizePublicBaseUrl(rawValue: string): string | null {
+  const primaryValue = rawValue
+    .split(',')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+
+  if (!primaryValue) {
+    return null;
+  }
+
+  try {
+    const url = new URL(primaryValue);
+    url.hash = '';
+    url.search = '';
+    url.pathname = url.pathname.replace(/\/$/, '');
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
 interface AuthenticatedRequest extends Request {
   user?: {
     healthId: string;
@@ -76,14 +97,17 @@ export class EmergencyController {
       const baseUrl = process.env.BASE_URL?.trim();
       const requestOrigin = req.get('origin')?.trim();
       const hostFallback = req.get('host') ? `${req.protocol}://${req.get('host')}` : undefined;
-      const publicBaseUrl = frontendUrl || baseUrl || requestOrigin || hostFallback;
+      const publicBaseUrl =
+        (frontendUrl ? normalizePublicBaseUrl(frontendUrl) : null) ||
+        (baseUrl ? normalizePublicBaseUrl(baseUrl) : null) ||
+        (requestOrigin ? normalizePublicBaseUrl(requestOrigin) : null) ||
+        (hostFallback ? normalizePublicBaseUrl(hostFallback) : null);
 
       if (!publicBaseUrl) {
         return res.status(500).json({ error: 'Unable to build emergency link URL. Configure FRONTEND_URL.' });
       }
 
-      const normalizedBase = publicBaseUrl.replace(/\/$/, '');
-      const shortUrl = `${normalizedBase}/one/${token}`;
+      const shortUrl = new URL(`/one/${token}`, `${publicBaseUrl}/`).toString();
 
       // Create emergency share record with shortUrl
       const emergencyShare = await prisma.emergencyShare.create({

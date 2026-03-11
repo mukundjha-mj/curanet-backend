@@ -4,12 +4,42 @@ import { Resend } from 'resend';
 
 dotenv.config();
 
+function normalizePublicAppUrl(rawValue: string, envName: string): string {
+  const primaryValue = rawValue
+    .split(',')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+
+  if (!primaryValue) {
+    throw new Error(`${envName} is set but does not contain a valid URL`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(primaryValue);
+  } catch {
+    throw new Error(`${envName} must be a valid absolute URL like "https://curanet.in"`);
+  }
+
+  parsed.hash = '';
+  parsed.search = '';
+  parsed.pathname = parsed.pathname.replace(/\/$/, '');
+
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function buildFrontendLink(baseUrl: string, queryKey: string, token: string): string {
+  const url = new URL(baseUrl);
+  url.searchParams.set(queryKey, token);
+  return url.toString();
+}
+
 const getFrontendUrl = (): string => {
   const value = process.env.FRONTEND_URL;
   if (!value) {
     throw new Error('FRONTEND_URL is not set in environment variables');
   }
-  return value;
+  return normalizePublicAppUrl(value, 'FRONTEND_URL');
 };
 
 const getEmailFrom = (): string => {
@@ -23,8 +53,55 @@ const getEmailFrom = (): string => {
 const FRONTEND_URL = getFrontendUrl();
 const EMAIL_FROM = getEmailFrom();
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const PUBLIC_EMAIL_PROVIDERS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'icloud.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+]);
 
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+
+function extractEmailAddress(input: string): string {
+  const match = input.match(/<([^>]+)>/);
+  return (match ? match[1] : input).trim().toLowerCase();
+}
+
+function getEmailDomain(input: string): string {
+  const email = extractEmailAddress(input);
+  const atIndex = email.lastIndexOf('@');
+
+  if (atIndex === -1 || atIndex === email.length - 1) {
+    throw new Error('EMAIL_FROM must be a valid email address or display-name format like "CuraNet <noreply@curanet.in>"');
+  }
+
+  return email.slice(atIndex + 1);
+}
+
+function validateEmailProviderConfiguration(): void {
+  const senderDomain = getEmailDomain(EMAIL_FROM);
+  const verifiedDomain = process.env.RESEND_VERIFIED_DOMAIN?.trim().toLowerCase();
+
+  if (resend && PUBLIC_EMAIL_PROVIDERS.has(senderDomain)) {
+    throw new Error(
+      `EMAIL_FROM uses public mailbox domain "${senderDomain}" which Resend will reject. Use a sender on your verified domain, for example "CuraNet <noreply@curanet.in>".`
+    );
+  }
+
+  if (resend && verifiedDomain && senderDomain !== verifiedDomain) {
+    throw new Error(
+      `EMAIL_FROM domain "${senderDomain}" does not match RESEND_VERIFIED_DOMAIN "${verifiedDomain}".`
+    );
+  }
+}
+
+validateEmailProviderConfiguration();
 
 async function sendEmailWithProviders(to: string, subject: string, html: string) {
   // Priority 1: Resend
@@ -114,7 +191,7 @@ function buildVerificationHtml(verifyLink: string) {
 }
 
 export async function sendVerificationEmail(to: string, token: string) {
-  const verifyLink = `${FRONTEND_URL}?verifyToken=${encodeURIComponent(token)}`;
+  const verifyLink = buildFrontendLink(FRONTEND_URL, 'verifyToken', token);
   const html = buildVerificationHtml(verifyLink);
   await sendEmailWithProviders(to, 'CuraNet - Verify your email', html);
 }
@@ -164,7 +241,7 @@ function buildPasswordResetHtml(resetLink: string) {
 }
 
 export async function sendPasswordResetEmail(to: string, token: string) {
-  const resetLink = `${FRONTEND_URL}?resetToken=${encodeURIComponent(token)}`;
+  const resetLink = buildFrontendLink(FRONTEND_URL, 'resetToken', token);
   const html = buildPasswordResetHtml(resetLink);
   await sendEmailWithProviders(to, 'CuraNet - Reset your password', html);
 }

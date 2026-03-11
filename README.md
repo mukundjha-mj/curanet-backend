@@ -120,8 +120,8 @@ A comprehensive, secure, and scalable digital healthcare platform designed for t
 - **Cookie Parser** - Secure HTTP-only cookies
 
 ### **Email & Notifications**
-- **SendGrid** - Transactional emails
-- **Nodemailer** - Email fallback
+- **Resend** - Transactional emails with verified domains
+- **Nodemailer** - SMTP/Ethereal fallback
 - **Twilio** (ready) - SMS notifications
 
 ### **Logging & Monitoring**
@@ -186,7 +186,7 @@ A comprehensive, secure, and scalable digital healthcare platform designed for t
 
 ┌──────────────────────────────────────────────────────────────┐
 │                    External Services                          │
-│  • SendGrid (Email)                                           │
+│  • Resend (Email)                                             │
 │  • Twilio (SMS - ready)                                       │
 │  • Cloud Storage (S3 - ready)                                 │
 │  • APM Tools (New Relic/Datadog - ready)                      │
@@ -221,6 +221,11 @@ npm install
 cp .env.example .env
 # Edit .env with your configuration
 ```
+
+Production email note:
+- Use `EMAIL_FROM` on your verified domain, for example `CuraNet <noreply@curanet.in>`.
+- Do not use personal mailbox domains like `gmail.com`, `outlook.com`, or `yahoo.com` with Resend.
+- If using Resend, set both `RESEND_API_KEY` and `RESEND_VERIFIED_DOMAIN`.
 
 4. **Generate Prisma client**
 ```bash
@@ -302,11 +307,11 @@ CORS_ORIGIN="https://yourdomain.com,https://www.yourdomain.com"
 FRONTEND_URL="https://yourdomain.com"
 
 # ===================================
-# Email Service (SendGrid)
+# Email Service (Resend)
 # ===================================
-SENDGRID_API_KEY="your-sendgrid-api-key"
-SENDGRID_FROM_EMAIL="noreply@yourdomain.com"
-SENDGRID_FROM_NAME="CuraNet Healthcare"
+RESEND_API_KEY="re_xxxxxxxxx"
+RESEND_VERIFIED_DOMAIN="curanet.in"
+EMAIL_FROM="CuraNet <noreply@curanet.in>"
 
 # ===================================
 # SMS Service (Twilio - Optional)
