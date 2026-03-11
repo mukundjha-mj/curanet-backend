@@ -242,13 +242,6 @@ export const register = async (req: Request, res: Response): Promise<void> => {
                 console.warn('Email send failed (dev fallback used if configured):', e);
             }
 
-            // Send a welcome email after successful signup
-            try {
-                await EmailService.sendWelcomeEmail(normalizedEmail, name);
-            } catch (e) {
-                console.warn('Welcome email send failed:', e);
-            }
-
             // In development, log verification token only for real emails
             const isProduction = process.env.NODE_ENV === 'production';
             if (!isProduction) {
@@ -330,6 +323,12 @@ export const verifyEmail = async (req: Request, res: Response): Promise<void> =>
                 data: { usedAt: new Date() }
             });
         });
+
+        try {
+            await EmailService.sendEmailVerifiedConfirmation(verification.user.email);
+        } catch (e) {
+            console.warn('Verified confirmation email send failed:', e);
+        }
 
         res.json({ message: 'Email verified successfully' });
 

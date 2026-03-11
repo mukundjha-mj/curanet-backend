@@ -246,6 +246,24 @@ export async function sendPasswordResetEmail(to: string, token: string) {
   await sendEmailWithProviders(to, 'CuraNet - Reset your password', html);
 }
 
+function buildEmailVerifiedHtml() {
+  return buildEmailLayout({
+    title: 'Email verified successfully',
+    subtitle: 'Your CuraNet email has been verified and your account is now active.',
+    bodyHtml: `
+      <div style="padding:14px 16px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:12px;margin-bottom:16px;">
+        <p style="margin:0;font-size:14px;color:#166534;">You can now sign in and continue using CuraNet securely.</p>
+      </div>
+      <a href="${FRONTEND_URL}" style="display:inline-block;padding:12px 20px;background:#0f766e;color:#fff;border-radius:10px;text-decoration:none;font-weight:600;">Open CuraNet</a>
+    `,
+  });
+}
+
+export async function sendEmailVerifiedConfirmation(to: string) {
+  const html = buildEmailVerifiedHtml();
+  await sendEmailWithProviders(to, 'CuraNet - Email verified successfully', html);
+}
+
 function buildWelcomeHtml(displayName?: string) {
   const safeName = displayName?.trim() ? displayName.trim() : 'there';
   return buildEmailLayout({
@@ -269,5 +287,6 @@ export default {
   sendVerificationEmail,
   sendEmailOtp,
   sendPasswordResetEmail,
+  sendEmailVerifiedConfirmation,
   sendWelcomeEmail,
 };
